@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# trained model artifacts (large binary files — distribute separately)
+models/*.keras
+models/*.h5
+models/labels.json
+
+# dataset
+data/*
+!data/.gitkeep
+
+.pytest_cache/
+*.egg-info/
