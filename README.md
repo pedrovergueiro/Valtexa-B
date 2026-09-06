@@ -21,18 +21,22 @@ app/                      # API de inferência
   main.py                 # rotas: /health, /models, /classes, /predict, /predict/batch
   registry.py             # catálogo de modelos (classes, pesos, datasets)
   model.py                # carregamento dos pesos + execução das previsões
+  review.py               # fila de revisão do agrônomo (ciclo de dados próprio)
   config.py               # variáveis de ambiente
   schemas.py              # contrato HTTP (Pydantic)
   inference/
     preprocess.py         # decodificação e pré-processamento das imagens
+    novelty.py             # detecção do que o modelo nunca viu (Mahalanobis)
 training/                 # treino
   train.py                # script principal (2 fases: cabeça + fine-tuning)
-  prepare_dataset.py      # consolida datasets públicos no layout canônico
+  fit_novelty.py          # calibra a detecção de novidade após o treino
+  prepare_dataset.py      # consolida datasets (públicos ou revisados) no layout canônico
   dataset.py              # carregamento e augmentation
   model_def.py            # arquitetura (MobileNetV2 + cabeça)
-tests/                    # suíte da API, do catálogo e do pré-processamento
-models/                   # pesos + .labels.json (não versionados)
+tests/                    # suíte da API, do catálogo, da novidade e do pré-processamento
+models/                   # pesos + .labels.json + .novelty.npz (não versionados)
 data/<modelo>/            # dataset por modelo (não versionado)
+review/                   # fila do agrônomo: pending/ e labeled/ (não versionado)
 ```
 
 ## Requisitos
@@ -69,6 +73,15 @@ o `.labels.json` com a ordem das classes — que é o que a API usa para traduzi
 índice previsto em nome.
 
 `python -m training.train --help` lista todos os parâmetros.
+
+Depois de treinar, calibre a detecção de novidade (uma vez por modelo):
+
+```bash
+python -m training.fit_novelty --model leaf-foliar
+```
+
+Sem esse passo o modelo funciona normalmente — só não marca o que nunca viu.
+Ver [ciclo de dados próprio](#ciclo-de-dados-próprio) abaixo.
 
 ### GPU no Windows
 
@@ -113,6 +126,8 @@ curl -F "file=@colmo.jpg" "http://localhost:8000/predict?platform=ground"
   "predicted_class": "Common_Rust",
   "confidence": 0.973,
   "abstained": false,
+  "novelty_score": 0.42,
+  "needs_review": false,
   "probabilities": [
     { "class_name": "Blight", "probability": 0.011 },
     { "class_name": "Common_Rust", "probability": 0.973 },
@@ -123,10 +138,16 @@ curl -F "file=@colmo.jpg" "http://localhost:8000/predict?platform=ground"
 }
 ```
 
+`novelty_score` acima de `1.0` significa que a imagem não se parece com nada
+que o modelo viu no treino — inclusive quando ele responde com confiança alta
+mesmo assim. `needs_review` vira `true` nesse caso; ver
+[ciclo de dados próprio](#ciclo-de-dados-próprio).
+
 O `/predict/batch` processa o lote inteiro numa única passada e acrescenta um
-`summary` com a contagem por classe — útil para fechar o resultado de um voo. A
-validação é tudo-ou-nada: se uma imagem for ilegível, a requisição falha com
-`400` identificando o arquivo.
+`summary` com a contagem por classe e um `needs_review_count` — útil para fechar
+o resultado de um voo e saber quanto sobra para o agrônomo olhar. A validação é
+tudo-ou-nada: se uma imagem for ilegível, a requisição falha com `400`
+identificando o arquivo.
 
 ## Configuração
 
@@ -139,6 +160,8 @@ Todas opcionais, via `.env` (ver `.env.example`).
 | `DATA_DIR` | `data` | Raiz dos datasets de treino. |
 | `MODEL_PATH` | — | Sobrescreve os pesos **só do modelo padrão**. |
 | `MIN_CONFIDENCE` | `0.0` | Abaixo disso a resposta vem como `abstained`. |
+| `NOVELTY_SENSITIVITY` | `1.0` | Regula o volume da fila de revisão; menor = mais imagens marcadas. |
+| `REVIEW_DIR` | — | Onde arquivar as imagens marcadas. Vazio = fila desligada (só marca `needs_review` na resposta). |
 | `MAX_UPLOAD_MB` | `10` | Tamanho máximo por imagem. |
 | `MAX_BATCH_SIZE` | `20` | Imagens por requisição em `/predict/batch`. |
 | `CORS_ORIGINS` | `localhost:5173,localhost:3000` | Origens do front, separadas por vírgula. |
@@ -147,6 +170,31 @@ Todas opcionais, via `.env` (ver `.env.example`).
 Com `CORS_ORIGINS=*` as credenciais de CORS são desativadas automaticamente — a
 combinação `*` + credenciais é inválida por spec e, na prática, liberaria
 qualquer site.
+
+## Ciclo de dados próprio
+
+Um softmax é fechado: diante de cigarrinha, deficiência nutricional ou qualquer
+coisa fora do catálogo, ele responde uma das classes que conhece — às vezes com
+confiança alta e errado. A API detecta isso comparando o embedding da imagem
+(assinatura visual de 128 dimensões, extraída na mesma passada da inferência)
+contra o que o modelo viu no treino. O que não se parece com nada conhecido
+vira `needs_review: true` e, se `REVIEW_DIR` estiver configurado, é arquivado
+com o palpite do modelo ao lado.
+
+```
+/predict → needs_review? → review/pending/<data>/<id>.jpg + <id>.json
+                                          ↓  agrônomo diagnostica e move
+                          review/labeled/<Classe>/<id>.jpg
+                                          ↓
+              python -m training.prepare_dataset --source review/labeled
+                                          ↓
+                          data/<modelo>/<Classe>/  →  train  →  fit_novelty
+```
+
+A ação do agrônomo é arrastar o arquivo para a pasta com o nome da classe — todo
+nome do catálogo já é reconhecido pelo `prepare_dataset`. Detalhe completo,
+incluindo como regular `NOVELTY_SENSITIVITY`, em
+**[MODELS.md](MODELS.md#novidade)**.
 
 ## Paridade entre treino e inferência
 
@@ -166,9 +214,10 @@ ruff check .
 ruff format .
 ```
 
-A suíte roda **sem TensorFlow**: as rotas são exercitadas com um dublê do modelo
-Keras. O único teste que exige o TF é o de paridade do pré-processamento, que é
-pulado automaticamente quando ele não está instalado.
+A suíte roda **sem TensorFlow**: as rotas, o catálogo e a detecção de novidade
+são exercitados com um dublê do modelo Keras e embeddings sintéticos. O único
+teste que exige o TF é o de paridade do pré-processamento, que é pulado
+automaticamente quando ele não está instalado.
 
 ## Docker
 
@@ -182,8 +231,11 @@ Os pesos não entram na imagem — são binários grandes e versionados à parte
 
 ## Roadmap
 
-- [ ] Treinar `leaf-foliar` e `coffee-foliar`, validar cada um num conjunto de teste próprio.
+- [ ] Treinar `leaf-foliar` e `coffee-foliar`, calibrar `fit_novelty`, validar cada
+      um num conjunto de teste próprio.
 - [ ] Piloto comercial com drone terceirizado (voo baixo + `leaf-foliar`/`coffee-foliar`).
+- [ ] Primeiro ciclo real do fluxo de revisão: ligar `REVIEW_DIR` em produção e
+      medir quanto do volume de voo vira dataset novo por semana.
 - [ ] Coleta própria de café no Sul de Minas — ver prioridade em [MODELS.md](MODELS.md).
 - [ ] Coleta de campo para as classes exclusivas do rover — ver [MODELS.md](MODELS.md).
 - [ ] Camada de fusão: risco do drone → tasking do rover → diagnóstico confirmado.
