@@ -1,17 +1,23 @@
 __pycache__/
-*.pyc
+*.py[cod]
 .venv/
 venv/
 .env
 
-# trained model artifacts (large binary files — distribute separately)
-models/*.keras
-models/*.h5
-models/labels.json
+# artefatos de treino (binarios grandes — distribuir fora do git)
+models/*
+!models/.gitkeep
 
 # dataset
 data/*
 !data/.gitkeep
 
+# datasets públicos brutos (arquivados fora do git — só o consolidado em data/ importa)
+downloads/
+
 .pytest_cache/
+.ruff_cache/
 *.egg-info/
+
+# fila de revisao do agronomo (imagens de cliente — fora do git)
+review/

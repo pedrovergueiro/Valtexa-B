@@ -1,0 +1,36 @@
+[project]
+name = "valtexa-disease-backend"
+version = "2.1.0"
+description = "API de inferência para detecção de doenças em folhas de milho e café"
+requires-python = ">=3.10,<3.13"
+
+[tool.ruff]
+# PEP 8 permite que a equipe estenda o limite de 79 colunas; 100 mantém as
+# chamadas do FastAPI e as mensagens em português legíveis sem quebras forçadas.
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "SIM",  # simplify
+    "RUF",
+]
+# B008 é o padrão do FastAPI para declarar dependências (File(...), Depends(...)).
+ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+# Os testes acessam helpers privados de propósito, para cobrir o fallback de rótulos.
+"tests/*" = ["SLF001"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = ["error::DeprecationWarning"]

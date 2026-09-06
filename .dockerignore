@@ -1,0 +1,16 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+data
+models
+tests
+training
+.env
+README.md
+Dockerfile
+.dockerignore
+MODELS.md
