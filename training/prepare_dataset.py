@@ -33,6 +33,24 @@ from app.registry import (
 
 IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".webp", ".bmp"})
 
+APPLEDOUBLE_PREFIX = "._"
+"""Prefixo dos arquivos de metadado que o macOS deixa em mídias não-HFS.
+
+Eles copiam o nome do arquivo original, extensão inclusive, então ``._foto.jpg``
+passa por qualquer filtro que olhe só o sufixo — e não é imagem nenhuma. Vários
+datasets públicos são publicados com esse lixo dentro (o ``corn-stalks`` do
+Kaggle tem um para cada imagem, o que dobra a contagem aparente).
+"""
+
+
+def is_image(item: Path) -> bool:
+    """Se o arquivo é uma imagem que vale copiar para o dataset."""
+    return (
+        item.is_file()
+        and item.suffix.lower() in IMAGE_SUFFIXES
+        and not item.name.startswith(APPLEDOUBLE_PREFIX)
+    )
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -112,7 +130,7 @@ def execute_plan(
         for directory in directories:
             prefix = _slug(directory.name)
             for image in sorted(directory.iterdir()):
-                if image.suffix.lower() not in IMAGE_SUFFIXES or not image.is_file():
+                if not is_image(image):
                     continue
                 transfer(str(image), str(destination / f"{prefix}__{image.name}"))
                 total += 1
@@ -174,17 +192,11 @@ def main() -> None:
 
 
 def _has_images(directory: Path) -> bool:
-    return any(
-        item.is_file() and item.suffix.lower() in IMAGE_SUFFIXES for item in directory.iterdir()
-    )
+    return any(is_image(item) for item in directory.iterdir())
 
 
 def _count_images(directory: Path) -> int:
-    return sum(
-        1
-        for item in directory.iterdir()
-        if item.is_file() and item.suffix.lower() in IMAGE_SUFFIXES
-    )
+    return sum(1 for item in directory.iterdir() if is_image(item))
 
 
 def _slug(name: str) -> str:

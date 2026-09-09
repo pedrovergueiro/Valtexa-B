@@ -255,6 +255,27 @@ SOURCE_CLASS_ALIASES: dict[str, str] = {
     # e qualquer outra origem que já venha com o nome da doença sozinho.
     "rust": "Rust",
     "cercospora": "Cercospora_Leaf_Spot",
+    # PlantVillage re-empacotado com a cultura no fim do nome, em vez do início
+    # (kaggle:rashidthihan/plant-disease-dataset). A ordem das palavras muda, e
+    # a normalização não reordena, então as duas grafias precisam constar.
+    "northern leaf blight corn maize": "Blight",
+    "common rust corn maize": "Common_Rust",
+    "cercospora leaf spot gray leaf spot corn maize": "Gray_Leaf_Spot",
+    "healthy corn maize": "Healthy",
+    # Datasets indonésios de milho (kaggle:ndisan/*). "daun" é folha; "karat",
+    # ferrugem; "hawar", queima/requeima; "bercak", mancha; "sehat", saudável.
+    "karat daun": "Common_Rust",
+    "hawar daun": "Blight",
+    "bercak daun": "Gray_Leaf_Spot",
+    "daun sehat": "Healthy",
+    "sehat": "Healthy",
+    # Colmo, para o rover-understory (kaggle:ndisan/corn-stalks). "busuk" é
+    # podridão; "pelepah", bainha; "arang", carvão. São duas etiologias
+    # distintas — podridão de bainha e podridão-de-carvão (Macrophomina) — e o
+    # catálogo tem uma classe só de colmo, então as duas caem em Stalk_Rot.
+    # Se um dia elas precisarem ser separadas, é aqui que a decisão muda.
+    "busuk pelepah": "Stalk_Rot",
+    "busuk arang": "Stalk_Rot",
 }
 """Nomes de pasta das origens públicas mapeados para as classes canônicas.
 
