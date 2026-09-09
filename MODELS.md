@@ -48,10 +48,13 @@ cada modelo saiba o que **não** consegue responder — exatamente o que um soft
 
 | Modelo | Cultura | Plataforma | Classes | Estado | Papel |
 | --- | --- | --- | --- | --- | --- |
-| [`leaf-foliar`](#leaf-foliar) | Milho | qualquer | 4 | **Treinável hoje** | Piloto comercial |
-| [`coffee-foliar`](#coffee-foliar) | Café | qualquer | 5 | **Treinável hoje** | Diferencial estratégico |
-| [`rover-understory`](#rover-understory) | Milho | rover | 8 | Precisa de coleta | Produto principal |
+| [`leaf-foliar`](#leaf-foliar) | Milho | qualquer | 4 | **Treinado** · teste 0,9555 | Piloto comercial |
+| [`coffee-foliar`](#coffee-foliar) | Café | qualquer | 5 | **Treinado** · teste 0,9499 | Diferencial estratégico |
+| [`rover-understory`](#rover-understory) | Milho | rover | 8 | **Em quarentena** · precisa de coleta | Produto principal |
 | [`aerial-canopy`](#aerial-canopy) | Milho | drone | 2 | Precisa de coleta | Triagem |
+
+Acurácia sobre conjunto de teste isolado, com TTA, medida em 08/09/2026. Cada
+número vem com a sua ressalva na seção do modelo — leia antes de citar.
 
 ```bash
 curl http://localhost:8000/models        # catálogo + quais estão carregados
@@ -108,17 +111,27 @@ Em ordem de prioridade — ver o [catálogo de datasets](#datasets) para detalhe
 ```bash
 # 1. baixe e extraia os datasets em qualquer pasta
 # 2. consolide no layout canônico
+#
+#    Aponte para a SUBPASTA certa, nunca para a raiz: o PlantVillage publica
+#    color/, grayscale/ e segmented/ — a mesma folha três vezes — e o
+#    prepare_dataset varre a árvore inteira. Apontar para a raiz triplica cada
+#    imagem e o split de validação passa a avaliar o que já está no treino.
 python -m training.prepare_dataset --model leaf-foliar \
     --source "C:/datasets/corn-or-maize-leaf-disease" \
-    --source "C:/datasets/PlantVillage" \
+    --source "C:/datasets/PlantVillage/color" \
     --dry-run                      # confira o plano antes
 
 python -m training.prepare_dataset --model leaf-foliar \
     --source "C:/datasets/corn-or-maize-leaf-disease" \
-    --source "C:/datasets/PlantVillage"
+    --source "C:/datasets/PlantVillage/color"
 
-# 3. treine
-python -m training.train --model leaf-foliar --epochs 15 --fine-tune-epochs 5
+# 3. remova as repetidas — sem isto a métrica final é ficção
+python -m training.dedupe_dataset --model leaf-foliar --dry-run
+python -m training.dedupe_dataset --model leaf-foliar
+
+# 4. treine e meça
+python -m training.train --model leaf-foliar --tta
+python -m training.evaluate --model leaf-foliar --tta
 ```
 
 ### Como usar
@@ -135,6 +148,67 @@ curl -F "file=@folha.jpg" "http://localhost:8000/predict?model=leaf-foliar"
 não diz nada sobre campo. O número que vale é a acurácia sobre um conjunto de
 teste **capturado pela sua própria plataforma**, separado antes de qualquer
 treino. Sem ele, você não tem número para prometer a cliente.
+
+Medido, e não suposto: a primeira versão treinada só no
+`corn-maize-leaf-disease` (4.566 imagens) marcou **0,9157** de `val_accuracy`.
+O mesmo modelo, avaliado no conjunto de teste montado depois com dado de campo
+(`maize-in-field` e `plantseg-corn`), tirou **0,5499** — e acertou apenas 27%
+das folhas saudáveis, chamando 412 delas de ferrugem comum. A queda de 37
+pontos não foi regressão: foi a diferença entre a régua de laboratório e a régua
+de campo, aparecendo pela primeira vez.
+
+Com o dataset consolidado e deduplicado (19.787 imagens), o mesmo treino sobe
+para **0,9555** de acurácia e **0,9380** de macro-F1 no conjunto de teste
+isolado — as duas medidas no mesmo conjunto, então os números se comparam. O
+ganho real, portanto, não foi de 0,9157 para 0,9555: foi de **0,55 para 0,96 na
+condição que importa**, a de campo.
+
+**Prefira `macro-F1` a acurácia.** A acurácia deixa a classe abundante decidir o
+número; o macro-F1 dá o mesmo peso à doença rara, que costuma ser a que importa
+detectar cedo. Rode `python -m training.evaluate --model leaf-foliar --tta` para
+o relatório por classe.
+
+<a id="teto-do-dataset"></a>
+### O teto: por que 100% não é a meta
+
+Três medidas independentes, feitas neste dataset, apontam para o mesmo lugar:
+
+1. **Rótulos que se contradizem.** A deduplicação por assinatura perceptual
+   achou 88 grupos onde a *mesma imagem* aparece como `Blight` num dataset e
+   `Gray_Leaf_Spot` noutro — 1.164 arquivos. Nenhum modelo pode acertar os dois
+   rótulos. Isso é erro de Bayes, e é o teto real.
+2. **A resolução acabou.** 93,9% das imagens têm o menor lado entre 224 e 319
+   pixels. Treinar com entrada maior que 224 só reamostra o que já existe.
+3. **A capacidade parou de pagar.** Trocar a MobileNetV2 (2,3M parâmetros) pela
+   EfficientNetV2-S (21,6M) rendeu +0,65 ponto de acurácia e **piorou** o
+   macro-F1. O TTA, que rende +1,2 ponto na MobileNetV2, rende +0,1 na
+   EfficientNetV2-S — sinal de que o modelo já extraiu o que o dado tinha.
+
+A conclusão prática: acurácia acima de ~0,95 sobre estes datasets públicos
+indicaria vazamento entre treino e validação, não qualidade. O caminho para
+subir de verdade é **dado de campo próprio e melhor rotulado**, não modelo maior.
+
+### Resultado medido — 08/09/2026
+
+Conjunto de teste isolado (15% da base, sorteado por permutação semeada sobre a
+lista de arquivos, nunca usado para escolher época), sobre 19.787 imagens
+consolidadas e deduplicadas:
+
+| | Acurácia | macro-F1 | Pior classe |
+| --- | ---: | ---: | --- |
+| `leaf-foliar` | 0,9498 | 0,9313 | Gray_Leaf_Spot (recall 0,855) |
+| `leaf-foliar` + TTA | **0,9555** | **0,9380** | Gray_Leaf_Spot (recall 0,851) |
+
+O erro se concentra entre `Blight` e `Gray_Leaf_Spot` — o mesmo par dos 88
+grupos de rótulo contraditório. O modelo erra onde os próprios datasets
+discordam, o que é o comportamento esperado de um modelo que generaliza em vez
+de decorar.
+
+**Vazamento residual, medido:** nenhuma imagem do teste tem vizinho no treino a
+distância de Hamming ≤ 2 (a deduplicação removeu até aí), mas 6,5% têm vizinho a
+≤ 4. São folhas muito parecidas — provavelmente do mesmo pé. Isso torna o 0,9498
+otimista em talvez 1 a 3 pontos. Para o número mais defensável possível,
+rededuplique a `--max-distance 4` antes de retreinar.
 
 ### Limitações
 
@@ -204,7 +278,11 @@ python -m training.prepare_dataset --model coffee-foliar \
     --source "C:/datasets/JMuBEN" --source "C:/datasets/JMuBEN2" \
     --source "C:/datasets/RoCoLe"
 
-python -m training.train --model coffee-foliar --epochs 15 --fine-tune-epochs 5
+# Obrigatório aqui: o JMuBEN do Kaggle é 96% duplicata (ver acima).
+python -m training.dedupe_dataset --model coffee-foliar
+
+python -m training.train --model coffee-foliar --tta
+python -m training.evaluate --model coffee-foliar --tta
 ```
 
 Os nomes de pasta do JMuBEN não foram inspecionados por nós — o mapeamento em
@@ -227,6 +305,35 @@ numa única fazenda em Kirinyaga, Quênia, com câmera digital comum, em imagens
 **128×128 pixels** — resolução baixa e origem geográfica única. Ele ensina o
 modelo a reconhecer o *padrão* da lesão, não necessariamente a variação real do
 Sul de Minas (outra cultivar, outra luz, outro solo, outra fase do ano).
+
+<a id="jmuben-duplicado"></a>
+**O JMuBEN distribuído no Kaggle é 96% duplicata.** Medido em 08/09/2026: das
+59.942 imagens, apenas **2.570 são distintas**. Não são parecidas — a diferença
+de pixel entre as cópias é **exatamente zero**, e as três imagens mais repetidas
+aparecem cerca de 1.800 vezes cada. A varredura de limiar confirma que não é
+artefato do método: com distância de Hamming 0, 2 e 4 a taxa fica em 4,3%, 4,0%
+e 3,9% de sobreviventes.
+
+A consequência é grave para quem usa esse dataset sem checar: com divisão
+aleatória entre treino e validação, quase toda imagem de teste tem cópia
+idêntica no treino. Um modelo treinado assim relata **0,9962** de `val_accuracy`
+— e o número é ficção, porque o modelo está sendo consultado sobre o que
+decorou. Rode `python -m training.dedupe_dataset --model coffee-foliar` antes de
+qualquer treino.
+
+### Resultado medido — 08/09/2026
+
+Sobre as **3.462 imagens** que sobraram após a deduplicação, com conjunto de
+teste isolado de 15%:
+
+| | Acurácia | macro-F1 | Pior classe |
+| --- | ---: | ---: | --- |
+| `coffee-foliar` | 0,9441 | 0,9586 | Rust (recall 0,901) |
+| `coffee-foliar` + TTA | **0,9499** | **0,9623** | Rust (recall 0,905) |
+
+Número honesto, mas leia junto com a limitação de origem: a maior parte do que
+sobrou ainda vem da fazenda única no Quênia, a 128×128. **Espere queda em lavoura
+brasileira** — é exatamente o que a coleta no Sul de Minas existe para corrigir.
 
 ### Por que este é o modelo estratégico
 
@@ -305,6 +412,30 @@ parecido). Divida depois, se os dados justificarem.
 `Corn_Stunt` está na lista por relevância de mercado: no Brasil, o complexo de
 enfezamentos transmitido pela cigarrinha virou um problema maior que várias das
 doenças foliares clássicas.
+
+### Aviso — os pesos de 08/09/2026 estão em quarentena
+
+Uma primeira tentativa de treinar este modelo com o `corn-stalks`
+(kaggle:ndisan/corn-stalks) marcou **1,0000 de acurácia** no conjunto de teste,
+e já na primeira época com a base congelada. Um modelo não aprende a
+diagnosticar podridão de colmo numa época: aquilo era sinal de que as classes
+eram separáveis por algo que não é a doença.
+
+A verificação foi direta. Uma regressão logística treinada com **seis números
+por imagem** — média e desvio de R, G e B, sem nenhuma textura, forma ou lesão —
+também acerta **100%**. As imagens de colmo saudável e de colmo podre foram
+capturadas em condições diferentes, e o modelo aprendeu a reconhecer a *sessão
+de fotografia*.
+
+O mesmo dataset já havia mostrado 457 imagens (15%) presentes simultaneamente em
+`SEHAT` e nas pastas de podridão, removidas pela deduplicação.
+
+Os pesos estão em `models/_quarentena/` e **não devem ser servidos** — em campo
+o modelo erraria na primeira imagem, porque a pista que ele usa não existe fora
+daquele dataset. A lição para a coleta própria: **fotografe saudável e doente na
+mesma sessão, mesma luz, mesmo fundo**, intercalando as classes. Se um lote
+inteiro de uma classe sair de uma condição e o outro lote de outra, o dataset
+nasce inutilizável — e o número bonito esconde isso.
 
 ### Estratégia de treino em duas etapas
 
@@ -729,6 +860,39 @@ e calibra um limiar. Em produção, cada imagem ganha um `novelty_score`:
 
 O embedding sai da **mesma passada** que as probabilidades — a detecção de
 novidade não custa uma segunda inferência.
+
+**Uma covariância por classe, e um limiar por classe.** A primeira versão usava
+uma covariância compartilhada, e ela quebrou quando o dataset cresceu: com
+laboratório, campo e *in-the-wild* misturados, a mesma classe passou a ocupar
+regiões distantes do espaço, a covariância comum inchou, e covariância inchada
+encolhe a distância de **tudo** — inclusive do que é estranho. Cada classe agora
+tem o seu próprio formato de nuvem, e o score é a distância dividida pelo limiar
+*daquela* classe, o que impede que uma classe de nuvem larga vire um atrator.
+Classes com menos amostras que dimensões recuam para a covariância compartilhada.
+
+### Quanto ela realmente pega — medido em 08/09/2026
+
+Sete entradas que o modelo de milho nunca deveria ver, com o dataset de 19.787
+imagens:
+
+| Limiar | Pega fora de escopo | Marca dado bom |
+| ---: | :---: | ---: |
+| | compartilhada → **por classe** | compartilhada → **por classe** |
+| 1,0 | 1/7 → **3/7** | 0% → **0%** |
+| 0,8 | 3/7 → **5/7** | 5% → **2%** |
+| 0,7 | 4/7 → **6/7** | 23% → **10%** |
+
+O caso que mais importava: uma foto de **colmo** era classificada como `Blight`
+com **100% de confiança** e passava sem ser marcada. Agora é marcada.
+
+**A novidade sozinha não basta — combine com `MIN_CONFIDENCE`.** Os dois filtros
+pegam coisas diferentes: a novidade pega o que é visualmente estranho *com*
+confiança alta (o colmo); o `MIN_CONFIDENCE` pega o que o modelo já responde
+com dúvida (folha de café vira `Healthy` a 0,53). Juntos, com
+`MIN_CONFIDENCE=0.7` e `NOVELTY_SENSITIVITY=1.0`, **6 dos 7 casos** são
+interceptados. O que escapa dos dois é imagem de cor chapada com confiança
+média — para esse caso não há configuração, só uma classe "fora de escopo"
+treinada com negativos.
 
 ### O ciclo completo
 
