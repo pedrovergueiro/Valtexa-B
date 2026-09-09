@@ -30,6 +30,12 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--model", choices=sorted(MODEL_SPECS), default="leaf-foliar")
+    parser.add_argument(
+        "--weights",
+        type=Path,
+        default=None,
+        help="Pesos a calibrar. Padrão: os do catálogo. A referência é gravada ao lado deles.",
+    )
     parser.add_argument("--data-dir", type=Path, default=None, help="Padrão: data/<modelo>/.")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument(
@@ -52,8 +58,14 @@ def main() -> None:
     args = parse_args()
     spec = get_spec(args.model)
     data_dir = args.data_dir or spec.data_dir
+    weights = args.weights or spec.weights_path
+    # A referência acompanha os pesos que a geraram. Gravá-la sempre no caminho
+    # do catálogo faria uma calibração experimental sobrescrever a de produção.
+    novelty_path = (
+        spec.novelty_path if weights == spec.weights_path else weights.with_suffix(".novelty.npz")
+    )
 
-    _validate(spec, data_dir, args.percentile)
+    _validate(weights, data_dir, args.percentile)
 
     # Import tardio: o backend custa segundos e ``--help`` deve ser instantâneo.
     import keras
@@ -62,10 +74,10 @@ def main() -> None:
     from training.model_def import EMBEDDING_LAYER
 
     print(f"\n=== Calibrando novidade — {spec.title} ({spec.key}) ===")
-    print(f"Pesos:   {spec.weights_path}")
+    print(f"Pesos:   {weights}")
     print(f"Dados:   {data_dir}\n")
 
-    model = keras.models.load_model(spec.weights_path)
+    model = keras.models.load_model(weights)
     try:
         embedding_layer = model.get_layer(EMBEDDING_LAYER)
     except ValueError:
@@ -91,18 +103,17 @@ def main() -> None:
         percentile=args.percentile,
         shrinkage=args.shrinkage,
     )
-    reference.save(spec.novelty_path)
+    reference.save(novelty_path)
 
     _report(reference, embeddings, args.percentile)
-    print(f"\nReferência salva em: {spec.novelty_path}")
+    print(f"\nReferência salva em: {novelty_path}")
     print("A API passa a marcar 'needs_review' no próximo start.")
 
 
-def _validate(spec: ModelSpec, data_dir: Path, percentile: float) -> None:
-    if not spec.weights_path.exists():
+def _validate(weights: Path, data_dir: Path, percentile: float) -> None:
+    if not weights.exists():
         raise SystemExit(
-            f"Pesos não encontrados: {spec.weights_path}\n"
-            f"Treine antes: python -m training.train --model {spec.key}"
+            f"Pesos não encontrados: {weights}\nTreine antes com 'python -m training.train'."
         )
     if not data_dir.exists():
         raise SystemExit(f"Diretório de dados não encontrado: {data_dir}")
