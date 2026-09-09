@@ -329,6 +329,38 @@ tocar o disco.
 A fila só grava com `REVIEW_DIR` definido — sem ele, as rotas respondem `503`.
 Guardar imagem de cliente em disco é decisão de quem opera, não default nosso.
 
+As rotas são de **consulta**: o cliente pergunta o que há na fila. Não existe
+push — nenhum webhook, nenhum alerta sai daqui sozinho.
+
+### O que acontece com imagem que não deveria chegar
+
+Teste feito em 08/09/2026 com 210 quadros de vídeos de lavoura do YouTube. Não é
+captura da plataforma, e quase nada tem o enquadramento que os modelos
+esperam — que é exatamente o motivo de servir como sanidade.
+
+| Entrada | O modelo respondeu | Interceptado |
+| --- | --- | ---: |
+| Folha de café com **deficiência de magnésio** | Phoma 40%, Healthy 40%, Rust 20% | **75%** |
+| **Slides de PowerPoint** sobre doenças do milho | Common_Rust 57%, Gray_Leaf_Spot 39% | 41% |
+| **Vista aérea de drone** de lavoura de café | Rust em 94% dos quadros, confiança média 0,93 | **9%** |
+
+O primeiro caso é a engrenagem funcionando: deficiência nutricional não está no
+catálogo, o modelo não tinha resposta certa disponível, e três de cada quatro
+quadros foram para a fila do agrônomo. É assim que `Deficiencia_Magnesio` vira
+uma classe nova.
+
+**O terceiro caso é o perigoso, e nenhuma configuração resolve.** Uma foto aérea
+de dossel — onde nenhuma folha individual é sequer visível — vira `Rust` com 93%
+de confiança, e a detecção de novidade não a marca: no espaço de embeddings, uma
+textura verde de copa cai perto do que o modelo aprendeu como ferrugem.
+
+A consequência prática é uma regra de operação, não um parâmetro:
+
+> **Não envie imagem aérea para `leaf-foliar` ou `coffee-foliar`.** Eles são
+> modelos de *enquadramento*, e exigem a folha preenchendo o quadro. Triagem de
+> dossel é o papel do `aerial-canopy`, que ainda precisa de coleta — enquanto
+> ele não existir, essa validação tem de ser feita por quem chama a API.
+
 ## Paridade entre treino e inferência
 
 O modo de falha mais perigoso do projeto é um pré-processamento diferente entre
