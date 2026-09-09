@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.config import settings
 from app.registry import get_spec
 from training.train import MONITOR, _best_metric, _validate_args, _write_labels, resolve_paths
 
@@ -88,10 +89,77 @@ class TestLabelsFile:
         labels_path = _write_labels(LEAF, tmp_path / "model.keras", desordenado)
         assert json.loads(labels_path.read_text(encoding="utf-8")) == desordenado
 
-    def test_uses_the_catalogue_path_for_the_default_output(self):
+    def test_uses_the_catalogue_path_for_the_default_output(self, tmp_path, monkeypatch):
+        """Quando a saída é a do catálogo, os rótulos vão para o par dela.
+
+        O ``models_dir`` é redirecionado para um diretório temporário porque
+        ``weights_path`` e ``labels_path`` são resolvidos contra ele em tempo de
+        acesso. Sem isso este teste escreveria — e apagaria — o
+        ``.labels.json`` de um modelo realmente treinado, destruindo o contrato
+        de ordem de classes que a API lê em produção.
+        """
+        monkeypatch.setattr(settings, "models_dir", tmp_path)
+
         labels_path = _write_labels(LEAF, LEAF.weights_path, list(LEAF.class_names))
+
         assert labels_path == LEAF.labels_path
-        labels_path.unlink()
+        assert labels_path.parent == tmp_path
+        assert json.loads(labels_path.read_text(encoding="utf-8")) == list(LEAF.class_names)
+
+
+class TestSplitIndices:
+    """O corte treino/validação/teste é o contrato que sustenta toda métrica.
+
+    Se ele vazar, nenhum número do projeto significa o que diz — e o vazamento
+    não gera erro, só uma acurácia alta e um piloto decepcionante.
+    """
+
+    SPLIT = pytest.importorskip("training.dataset", reason="exige TensorFlow instalado")
+
+    def test_sizes_follow_the_requested_fractions(self):
+        train, val, test = self.SPLIT.split_indices(1000, 42, 0.2, 0.15)
+        assert (len(train), len(val), len(test)) == (650, 200, 150)
+
+    def test_the_three_sets_never_overlap(self):
+        train, val, test = self.SPLIT.split_indices(1000, 42, 0.2, 0.15)
+        assert set(train) & set(val) == set()
+        assert set(train) & set(test) == set()
+        assert set(val) & set(test) == set()
+
+    def test_every_sample_lands_in_exactly_one_set(self):
+        train, val, test = self.SPLIT.split_indices(1000, 42, 0.2, 0.15)
+        assert sorted([*train, *val, *test]) == list(range(1000))
+
+    def test_the_same_seed_gives_the_same_split(self):
+        """É o que permite comparar dois modelos e o que o evaluate reproduz."""
+        first = self.SPLIT.split_indices(500, 7, 0.2, 0.1)
+        second = self.SPLIT.split_indices(500, 7, 0.2, 0.1)
+        for a, b in zip(first, second, strict=True):
+            assert list(a) == list(b)
+
+    def test_a_different_seed_gives_a_different_split(self):
+        _, _, test_a = self.SPLIT.split_indices(500, 7, 0.2, 0.1)
+        _, _, test_b = self.SPLIT.split_indices(500, 8, 0.2, 0.1)
+        assert list(test_a) != list(test_b)
+
+    def test_zero_test_split_leaves_the_test_set_empty(self):
+        train, val, test = self.SPLIT.split_indices(1000, 42, 0.2, 0.0)
+        assert len(test) == 0
+        assert len(train) + len(val) == 1000
+
+    @pytest.mark.parametrize(
+        ("validation", "test"),
+        [
+            (-0.1, 0.2),  # soma 0,1 e passaria pelo teste de intervalo
+            (0.2, -0.1),
+            (0.9, 0.2),  # não sobra treino
+            (0.0, 0.0),  # não sobra validação
+        ],
+    )
+    def test_rejects_fractions_that_would_corrupt_the_split(self, validation, test):
+        """Fração negativa fatia ao contrário e sobrepõe treino e teste."""
+        with pytest.raises(ValueError):
+            self.SPLIT.split_indices(1000, 42, validation, test)
 
 
 class TestBestMetric:
