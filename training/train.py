@@ -27,6 +27,7 @@ from pathlib import Path
 from app.config import settings
 from app.registry import MODEL_SPECS, ModelSpec, get_spec
 from training import DEFAULT_SEED
+from training.model_def import ARCHITECTURES, DEFAULT_ARCH
 
 MONITOR = "val_accuracy"
 """Métrica que decide qual época é a melhor, tanto no checkpoint quanto no
@@ -52,13 +53,53 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--epochs", type=int, default=15, help="Épocas da fase 1 (cabeça).")
     parser.add_argument(
-        "--fine-tune-epochs", type=int, default=5, help="Épocas da fase 2. Use 0 para pular."
+        "--fine-tune-epochs", type=int, default=15, help="Épocas da fase 2. Use 0 para pular."
+    )
+    parser.add_argument(
+        "--arch",
+        choices=sorted(ARCHITECTURES),
+        default=DEFAULT_ARCH,
+        help="Base convolucional. Mais pesada = mais precisa e mais lenta.",
+    )
+    parser.add_argument(
+        "--img-size",
+        type=int,
+        default=None,
+        help="Lado da entrada. Padrão: o do catálogo. Aumentar ajuda em lesão pequena.",
+    )
+    parser.add_argument(
+        "--tta",
+        action="store_true",
+        help="Avalia o teste com test-time augmentation (média de 4 variações).",
     )
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--validation-split", type=float, default=0.2)
+    parser.add_argument(
+        "--test-split",
+        type=float,
+        default=0.1,
+        help="Fração separada para o teste final, que não influencia nenhuma decisão.",
+    )
     parser.add_argument("--patience", type=int, default=4, help="Paciência do early stopping.")
     parser.add_argument("--learning-rate", type=float, default=1e-3, help="LR da fase 1.")
-    parser.add_argument("--fine-tune-lr", type=float, default=1e-5, help="LR da fase 2.")
+    parser.add_argument("--fine-tune-lr", type=float, default=1e-4, help="LR da fase 2.")
+    parser.add_argument(
+        "--fine-tune-layers",
+        type=int,
+        default=40,
+        help="Quantas camadas finais da base liberar na fase 2. 0 libera todas.",
+    )
+    parser.add_argument(
+        "--no-class-weight",
+        action="store_true",
+        help="Desliga a compensação de classes desbalanceadas.",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="Onde cachear as imagens decodificadas. Acelera as épocas seguintes.",
+    )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument(
         "--output", type=Path, default=None, help="Padrão: o caminho de pesos do modelo."
@@ -89,25 +130,38 @@ def main() -> None:
             "classes que não têm dataset público. Ver MODELS.md.\n"
         )
 
-    # Imports tardios: carregar o TensorFlow custa alguns segundos, e assim
+    # Imports tardios: carregar o backend custa alguns segundos, e assim
     # ``--help`` e a validação dos argumentos respondem na hora.
     from training.dataset import load_datasets
     from training.model_def import build_model, unfreeze_base
 
-    train_ds, val_ds, class_names = load_datasets(
-        args.data_dir, spec.img_size, args.batch_size, args.validation_split, args.seed
+    img_size = args.img_size or spec.img_size
+    _, parametros, top1 = ARCHITECTURES[args.arch]
+    print(f"Base: {args.arch} ({parametros} params, {top1:.1%} top-1 no ImageNet)")
+    print(f"Entrada: {img_size}x{img_size}\n")
+
+    train_ds, val_ds, test_ds, class_names = load_datasets(
+        args.data_dir,
+        img_size,
+        args.batch_size,
+        args.validation_split,
+        args.seed,
+        test_split=args.test_split,
+        cache_dir=args.cache_dir,
     )
     _report_class_order(spec, class_names)
+
+    class_weight = None if args.no_class_weight else _class_weight(args.data_dir, class_names)
 
     # Gravado antes do treino: se a execução for interrompida, o checkpoint já
     # salvo continua acompanhado da ordem de classes correta.
     labels_path = _write_labels(spec, args.output, class_names)
 
-    import tensorflow as tf
+    import keras
 
-    model = build_model(spec.img_size, num_classes=len(class_names))
+    model = build_model(img_size, num_classes=len(class_names), arch=args.arch)
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=args.learning_rate),
+        optimizer=keras.optimizers.Adam(learning_rate=args.learning_rate),
         loss="sparse_categorical_crossentropy",
         metrics=["accuracy"],
     )
@@ -118,15 +172,30 @@ def main() -> None:
         train_ds,
         validation_data=val_ds,
         epochs=args.epochs,
+        class_weight=class_weight,
         callbacks=_build_callbacks(args, args.output, best_so_far=None),
     )
     best_accuracy = _best_metric(history)
 
     if args.fine_tune_epochs > 0:
-        print("\n== Fase 2: fine-tuning da base MobileNetV2 ==")
-        unfreeze_base(model)
+        liberadas = args.fine_tune_layers or None
+        alvo = f"as {liberadas} camadas finais" if liberadas else "a base inteira"
+        print(f"\n== Fase 2: fine-tuning de {alvo} ==")
+        base = unfreeze_base(model, trainable_layers=liberadas)
+        treinaveis = sum(1 for layer in base.layers if layer.trainable)
+        print(f"{treinaveis} de {len(base.layers)} camadas da base liberadas.")
+
+        # Cosine decay: o fine-tuning começa com a taxa cheia, para sair do ponto
+        # onde a fase 1 parou, e termina perto de zero, o que deixa o modelo
+        # assentar num mínimo em vez de ficar quicando em volta dele. Com taxa
+        # constante as últimas épocas costumam oscilar sem ganhar nada.
+        passos_por_epoca = max(1, int(train_ds.cardinality()))
+        schedule = keras.optimizers.schedules.CosineDecay(
+            initial_learning_rate=args.fine_tune_lr,
+            decay_steps=passos_por_epoca * args.fine_tune_epochs,
+        )
         model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=args.fine_tune_lr),
+            optimizer=keras.optimizers.Adam(learning_rate=schedule),
             loss="sparse_categorical_crossentropy",
             metrics=["accuracy"],
         )
@@ -137,6 +206,7 @@ def main() -> None:
             train_ds,
             validation_data=val_ds,
             epochs=args.fine_tune_epochs,
+            class_weight=class_weight,
             callbacks=_build_callbacks(args, args.output, best_so_far=best_accuracy),
         )
         best_accuracy = max(best_accuracy, _best_metric(history))
@@ -144,8 +214,12 @@ def main() -> None:
     print(f"\nMelhor {MONITOR}: {best_accuracy:.4f}")
     print(f"Pesos salvos em:  {args.output}")
     print(f"Labels salvos em: {labels_path}")
+
+    if test_ds is not None:
+        _report_test_performance(args.output, test_ds, class_names, tta=args.tta)
+
     print(
-        "\nLembre-se: val_accuracy medida sobre dataset público não prevê o "
+        "\nLembre-se: métrica medida sobre dataset público não prevê o "
         "desempenho em campo. Valide num conjunto de teste capturado pela sua "
         "própria plataforma antes de prometer número para cliente."
     )
@@ -163,6 +237,72 @@ def _validate_args(args: argparse.Namespace) -> None:
     if args.epochs < 1:
         raise SystemExit("--epochs precisa ser pelo menos 1.")
 
+    test_split = getattr(args, "test_split", 0.0)
+    if test_split < 0.0:
+        raise SystemExit("--test-split não pode ser negativo.")
+    if not args.validation_split + test_split < 1.0:
+        raise SystemExit(
+            "--validation-split + --test-split precisa sobrar dado para treinar "
+            f"(soma atual: {args.validation_split + test_split})."
+        )
+
+
+def _class_weight(data_dir: Path, class_names: list[str]) -> dict[int, float] | None:
+    """Peso por classe, inversamente proporcional ao tamanho dela.
+
+    Sem isso, a classe com menos exemplos contribui menos para a perda e o modelo
+    aprende a preferir as abundantes — o que aparece como recall baixo justamente
+    na doença mais rara, que costuma ser a que interessa detectar cedo. No
+    ``leaf-foliar`` a diferença é de mais de duas vezes entre Gray_Leaf_Spot e
+    Common_Rust.
+
+    Devolve ``None`` quando as classes já estão equilibradas, para não introduzir
+    um fator que só adiciona ruído.
+    """
+    from training.prepare_dataset import is_image
+
+    counts = [
+        sum(1 for item in (data_dir / name).iterdir() if is_image(item)) for name in class_names
+    ]
+    if not counts or min(counts) == 0:
+        return None
+
+    total = sum(counts)
+    if max(counts) / min(counts) < 1.5:
+        print("\nClasses equilibradas — sem compensação de peso.")
+        return None
+
+    weights = {index: total / (len(counts) * count) for index, count in enumerate(counts)}
+    print("\nPesos por classe (compensando o desbalanceamento):")
+    for index, name in enumerate(class_names):
+        print(f"    {name:<22} n={counts[index]:>6}  peso={weights[index]:.2f}")
+    return weights
+
+
+def _report_test_performance(
+    weights_path: Path, test_ds, class_names: list[str], *, tta: bool = False
+) -> None:
+    """Avalia os pesos da melhor época no conjunto que nunca foi consultado."""
+    import keras
+
+    from training.metrics import evaluate_dataset, format_report
+
+    # Recarrega do disco de propósito: é exatamente o artefato que vai para a
+    # API, e não o objeto em memória, que pode diferir se o early stopping tiver
+    # restaurado outros pesos.
+    best = keras.models.load_model(weights_path)
+
+    matrix = evaluate_dataset(best, test_ds, len(class_names))
+    print(format_report(matrix, class_names, title="Conjunto de teste (nunca visto)"))
+
+    if tta:
+        matrix_tta = evaluate_dataset(best, test_ds, len(class_names), tta=True)
+        print(format_report(matrix_tta, class_names, title="Mesmo teste, com TTA"))
+        print(
+            "\nO TTA custa 4 inferências por imagem. Só vale ligar em produção se "
+            "o ganho acima justificar quadruplicar a latência do /predict."
+        )
+
 
 def _build_callbacks(args: argparse.Namespace, output: Path, best_so_far: float | None) -> list:
     """Callbacks de uma fase de treino.
@@ -171,17 +311,17 @@ def _build_callbacks(args: argparse.Namespace, output: Path, best_so_far: float 
     paciência, enquanto o checkpoint precisa herdar o melhor resultado já obtido
     via ``best_so_far``.
     """
-    import tensorflow as tf
+    import keras
 
     return [
-        tf.keras.callbacks.EarlyStopping(
+        keras.callbacks.EarlyStopping(
             monitor=MONITOR,
             mode="max",
             patience=args.patience,
             restore_best_weights=True,
             verbose=1,
         ),
-        tf.keras.callbacks.ModelCheckpoint(
+        keras.callbacks.ModelCheckpoint(
             filepath=str(output),
             monitor=MONITOR,
             mode="max",

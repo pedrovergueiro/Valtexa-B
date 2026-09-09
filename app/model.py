@@ -19,6 +19,7 @@ import numpy as np
 from app.config import DEFAULT_IMG_SIZE, settings
 from app.inference.novelty import NoveltyReference
 from app.inference.preprocess import load_image_from_bytes, preprocess_batch
+from app.keras_backend import configure, to_numpy
 from app.schemas import ClassProbability, PredictionResponse
 
 if TYPE_CHECKING:  # evita o ciclo de import app.model <-> app.registry
@@ -95,11 +96,12 @@ class CornDiseaseModel:
             )
             return
 
-        import tensorflow as tf  # import tardio: custa alguns segundos no startup
+        configure()
+        import keras  # import tardio: custa alguns segundos no startup
 
         logger.info("[%s] carregando de %s ...", self.key, path)
         try:
-            self.attach(tf.keras.models.load_model(path), self._read_class_names())
+            self.attach(keras.models.load_model(path), self._read_class_names())
         except (ModelConfigurationError, OSError, ValueError) as exc:
             self._model = None
             logger.error("[%s] falha ao carregar de %s: %s", self.key, path, exc)
@@ -189,7 +191,7 @@ class CornDiseaseModel:
         outputs, embeddings = self._forward(batch)
         elapsed_ms = (perf_counter() - start) * 1000
 
-        probabilities = np.clip(np.asarray(outputs, dtype=np.float64), 0.0, 1.0)
+        probabilities = np.clip(to_numpy(outputs).astype(np.float64), 0.0, 1.0)
         self._check_output_shape(probabilities, len(uploads))
         novelty = self._score_novelty(embeddings, len(uploads))
 
@@ -204,7 +206,7 @@ class CornDiseaseModel:
         if self._novelty is None or embeddings is None:
             return [None] * expected_rows
         try:
-            scores = self._novelty.score(np.asarray(embeddings, dtype=np.float64))
+            scores = self._novelty.score(to_numpy(embeddings).astype(np.float64))
         except (ValueError, np.linalg.LinAlgError) as exc:
             # Novidade é um extra: se falhar, a previsão principal continua boa.
             logger.error("[%s] falha ao pontuar novidade: %s", self.key, exc)
@@ -334,7 +336,9 @@ def _build_forward(keras_model: Any) -> Any:
 
     try:
         embedding_output = keras_model.get_layer(EMBEDDING_LAYER).output
-        dual = keras_model.__class__(keras_model.inputs, [keras_model.output, embedding_output])
+        dual = keras_model.__class__(
+            _single_input(keras_model), [keras_model.output, embedding_output]
+        )
     except (AttributeError, ValueError, TypeError) as exc:
         logger.warning(
             "Camada %r não encontrada (%s) — detecção de novidade indisponível "
@@ -345,6 +349,20 @@ def _build_forward(keras_model: Any) -> Any:
         return lambda batch: (keras_model(batch, training=False), None)
 
     return lambda batch: tuple(dual(batch, training=False))
+
+
+def _single_input(keras_model: Any) -> Any:
+    """Devolve a entrada do modelo desembrulhada, quando há só uma.
+
+    ``model.inputs`` é sempre uma lista. Construir o modelo de duas saídas a
+    partir dela faria o Keras esperar uma lista também na chamada, e como o
+    lote chega como um tensor só, cada previsão emitiria um aviso de estrutura
+    incompatível — ruído em log de produção, a cada requisição.
+    """
+    inputs = getattr(keras_model, "inputs", None)
+    if isinstance(inputs, list | tuple) and len(inputs) == 1:
+        return inputs[0]
+    return inputs
 
 
 def _square_input_size(keras_model: Any) -> int | None:

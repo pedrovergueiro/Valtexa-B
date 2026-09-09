@@ -6,13 +6,17 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# libgomp1: dependência nativa do TensorFlow que não vem na imagem slim.
+# libgomp1: dependência nativa do backend que não vem na imagem slim.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# O índice /whl/cpu traz o torch sem as bibliotecas CUDA: a imagem cai de vários
+# gigabytes para algumas centenas de MB, e a API serve em CPU de qualquer forma.
+# Para servir em GPU, troque pelo índice cu12x correspondente à placa.
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
+    -r requirements.txt
 
 COPY app ./app
 

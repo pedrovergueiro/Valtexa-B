@@ -20,6 +20,7 @@ from pathlib import Path
 import numpy as np
 
 from app.inference.novelty import DEFAULT_PERCENTILE, DEFAULT_SHRINKAGE, NoveltyReference
+from app.keras_backend import to_numpy
 from app.registry import MODEL_SPECS, ModelSpec, get_spec
 
 
@@ -54,8 +55,8 @@ def main() -> None:
 
     _validate(spec, data_dir, args.percentile)
 
-    # Import tardio: o TensorFlow custa segundos e ``--help`` deve ser instantâneo.
-    import tensorflow as tf
+    # Import tardio: o backend custa segundos e ``--help`` deve ser instantâneo.
+    import keras
 
     from training.dataset import load_labeled_dataset
     from training.model_def import EMBEDDING_LAYER
@@ -64,7 +65,7 @@ def main() -> None:
     print(f"Pesos:   {spec.weights_path}")
     print(f"Dados:   {data_dir}\n")
 
-    model = tf.keras.models.load_model(spec.weights_path)
+    model = keras.models.load_model(spec.weights_path)
     try:
         embedding_layer = model.get_layer(EMBEDDING_LAYER)
     except ValueError:
@@ -73,7 +74,10 @@ def main() -> None:
             "versão anterior do model_def — retreine para habilitar a novidade."
         ) from None
 
-    embedder = tf.keras.Model(model.inputs, embedding_layer.output)
+    # ``model.inputs`` é uma lista; desembrulhada, o extrator aceita o lote como
+    # tensor único — que é como ele chega do ``tf.data``, sem aviso de estrutura.
+    inputs = model.inputs
+    embedder = keras.Model(inputs[0] if len(inputs) == 1 else inputs, embedding_layer.output)
     dataset, class_names = load_labeled_dataset(data_dir, spec.img_size, args.batch_size)
     _warn_on_class_mismatch(spec, class_names)
 
@@ -113,7 +117,11 @@ def _collect(embedder, dataset, max_images: int) -> tuple[np.ndarray, np.ndarray
     total = 0
 
     for images, labels in dataset:
-        chunks.append(np.asarray(embedder(images, training=False), dtype=np.float64))
+        # O lote sai do ``tf.data`` como tensor do TensorFlow. Passar por numpy
+        # no meio do caminho é o que deixa o mesmo código alimentar qualquer
+        # backend do Keras, em vez de só o TensorFlow.
+        embedded = embedder(np.asarray(images), training=False)
+        chunks.append(to_numpy(embedded).astype(np.float64))
         label_chunks.append(np.asarray(labels))
         total += len(labels)
         print(f"\r  {total} imagens processadas...", end="", flush=True)

@@ -1,0 +1,16 @@
+-r requirements.txt
+
+# O TensorFlow entra aqui só como carregador de dados: o pipeline de treino usa
+# ``tf.data`` e ``keras.utils.image_dataset_from_directory``, que roda sobre ele.
+# A conta com a GPU é do backend do Keras, e app/keras_backend.py tira a GPU do
+# TensorFlow para que os dois não disputem a placa.
+tensorflow==2.20.0
+
+# Para treinar na GPU, instale o torch do índice da NVIDIA correspondente à sua
+# placa — o wheel padrão do PyPI pode não trazer a arquitetura dela. As GPUs
+# Blackwell (RTX 50xx, compute capability 12.0) precisam de cu128 ou mais novo:
+#
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+#
+# Confira o que o seu torch suporta com:
+#   python -c "import torch; print(torch.cuda.get_arch_list())"

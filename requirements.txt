@@ -4,5 +4,12 @@ python-multipart==0.0.9
 pydantic==2.9.2
 pydantic-settings==2.5.2
 pillow==10.4.0
-numpy==1.26.4
-tensorflow==2.17.0
+numpy==2.5.3
+# anyio 4.5+ deprecia o alias anyio.abc.BlockingPortal que este starlette usa.
+anyio==4.4.0
+
+# O Keras 3 é o framework; quem executa é o backend escolhido em
+# app/keras_backend.py (torch por padrão). A API de inferência não precisa do
+# TensorFlow — ele só aparece no pipeline de treino, em requirements-training.txt.
+keras==3.15.1
+torch==2.11.0
