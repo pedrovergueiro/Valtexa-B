@@ -7,22 +7,25 @@ from collections import Counter
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.config import ALLOWED_CONTENT_TYPES, UPLOAD_CHUNK_BYTES, settings
 from app.inference.preprocess import InvalidImageError
 from app.model import CornDiseaseModel, ModelNotLoadedError, Upload
 from app.registry import MODEL_SPECS, Platform, registry
-from app.review import ReviewQueue
+from app.review import InvalidClassNameError, ReviewQueue, UnknownReviewItemError
 from app.schemas import (
     BatchPredictionResponse,
     ErrorResponse,
     HealthResponse,
     ModelInfo,
     PredictionResponse,
+    ReviewItem,
+    ReviewStats,
+    ReviewVerdict,
 )
 
 logger = logging.getLogger(__name__)
@@ -227,6 +230,88 @@ async def predict_batch(
         abstained_count=sum(1 for result in results if result.abstained),
         needs_review_count=sum(1 for result in results if result.needs_review),
     )
+
+
+@app.get(
+    "/review/stats",
+    response_model=ReviewStats,
+    summary="Tamanho da fila de revisão",
+    tags=["revisão"],
+)
+def review_stats() -> ReviewStats:
+    """Quanto material o modelo separou por não saber explicar."""
+    return ReviewStats(**review_queue.stats())
+
+
+@app.get(
+    "/review",
+    response_model=list[ReviewItem],
+    summary="Imagens aguardando diagnóstico",
+    tags=["revisão"],
+)
+def review_pending(
+    limit: int = Query(default=50, ge=1, le=500, description="Itens por página."),
+    offset: int = Query(default=0, ge=0, description="Quantos pular, para paginar."),
+) -> list[ReviewItem]:
+    """Lista o que a detecção de novidade separou, do mais recente ao mais antigo.
+
+    Cada item traz o palpite do modelo e a pontuação de novidade: o agrônomo
+    decide melhor sabendo o que a máquina respondeu e o quanto ela estranhou.
+    """
+    _require_review_queue()
+    return [ReviewItem(**item) for item in review_queue.pending(limit=limit, offset=offset)]
+
+
+@app.get(
+    "/review/{item_id}/image",
+    summary="A imagem de um item da fila",
+    tags=["revisão"],
+    responses={404: {"model": ErrorResponse, "description": "Item não encontrado."}},
+)
+def review_image(item_id: str) -> FileResponse:
+    """Devolve a foto para o agrônomo olhar antes de diagnosticar."""
+    _require_review_queue()
+    try:
+        return FileResponse(review_queue.image_path(item_id))
+    except UnknownReviewItemError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+@app.post(
+    "/review/{item_id}",
+    response_model=ReviewItem,
+    summary="Registrar o diagnóstico do agrônomo",
+    tags=["revisão"],
+    responses={
+        404: {"model": ErrorResponse, "description": "Item não encontrado."},
+        422: {"model": ErrorResponse, "description": "Rótulo inválido."},
+    },
+)
+def review_label(item_id: str, verdict: ReviewVerdict = Body(...)) -> ReviewItem:
+    """Aplica o rótulo e move a imagem para o dataset de revisados.
+
+    O rótulo **não** precisa existir no catálogo: um nome novo cria uma classe
+    nova, e é exatamente assim que uma doença que o modelo não conhecia entra no
+    dataset próprio. A partir daqui o ``prepare_dataset`` consome o diretório
+    como qualquer outro, e a imagem entra no próximo treino.
+    """
+    _require_review_queue()
+    try:
+        metadata = review_queue.label(item_id, verdict.class_name, verdict.reviewed_by)
+    except UnknownReviewItemError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except InvalidClassNameError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    return ReviewItem(**metadata)
+
+
+def _require_review_queue() -> None:
+    """A fila é opt-in: sem ``REVIEW_DIR`` não há o que listar nem onde gravar."""
+    if not review_queue.enabled:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Fila de revisão desligada. Defina REVIEW_DIR no .env para ativá-la.",
+        )
 
 
 def _enqueue_flagged(

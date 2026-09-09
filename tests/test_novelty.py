@@ -9,8 +9,8 @@ import pytest
 
 from app.config import settings
 from app.inference.novelty import NoveltyReference
-from app.registry import SOURCE_CLASS_ALIASES, get_spec, normalize_class_name
-from app.review import ReviewQueue
+from app.registry import SOURCE_CLASS_ALIASES, get_spec, normalize_class_name, registry
+from app.review import InvalidClassNameError, ReviewQueue, UnknownReviewItemError
 from tests.conftest import DEFAULT_MODEL, EMBEDDING_DIM, attach_fake, make_image_bytes
 from training.prepare_dataset import execute_plan, plan_dataset
 
@@ -194,6 +194,103 @@ class TestReviewQueue:
         blocker.write_text("sou um arquivo, nao um diretorio", encoding="utf-8")
 
         assert ReviewQueue(blocker).enqueue(b"x", self._prediction(client), "image/jpeg") is None
+
+
+class TestReviewApi:
+    """As rotas que a interface de revisão vai consumir."""
+
+    def _queued(self, client, tmp_path):
+        """Enfileira um item e devolve a fila e o id dele."""
+        attach_fake(DEFAULT_MODEL).embedding = FAR_AWAY
+        registry.get(DEFAULT_MODEL)._novelty = build_reference()
+        prediction = registry.get(DEFAULT_MODEL).predict("folha.jpg", make_image_bytes())
+
+        queue = ReviewQueue(tmp_path)
+        return queue, queue.enqueue(make_image_bytes(), prediction, "image/jpeg")
+
+    def test_lists_what_is_waiting_for_the_agronomist(self, client, tmp_path):
+        queue, item_id = self._queued(client, tmp_path)
+
+        pending = queue.pending()
+
+        assert [item["id"] for item in pending] == [item_id]
+        assert pending[0]["model_guess"], "o agrônomo decide melhor sabendo o palpite do modelo"
+        assert pending[0]["novelty_score"] > 1.0
+
+    def test_counts_the_queue(self, client, tmp_path):
+        queue, _ = self._queued(client, tmp_path)
+
+        stats = queue.stats()
+
+        assert stats == {
+            "enabled": True,
+            "pending": 1,
+            "labeled": 0,
+            "oldest_pending": stats["oldest_pending"],
+        }
+
+    def test_labelling_moves_the_image_into_the_training_layout(self, client, tmp_path):
+        queue, item_id = self._queued(client, tmp_path)
+
+        metadata = queue.label(item_id, "Cigarrinha", reviewed_by="agrônoma Ana")
+
+        assert metadata["reviewed_label"] == "Cigarrinha"
+        assert metadata["reviewed_by"] == "agrônoma Ana"
+        assert list((tmp_path / "labeled" / "Cigarrinha").glob("*.jpg"))
+        assert queue.stats() == {
+            "enabled": True,
+            "pending": 0,
+            "labeled": 1,
+            "oldest_pending": None,
+        }
+
+    def test_accepts_a_class_the_catalogue_does_not_have(self, client, tmp_path):
+        """Descobrir uma doença fora do catálogo é o objetivo da fila."""
+        queue, item_id = self._queued(client, tmp_path)
+        assert "Cigarrinha" not in get_spec(DEFAULT_MODEL).class_names
+
+        queue.label(item_id, "Cigarrinha")
+
+        assert (tmp_path / "labeled" / "Cigarrinha").is_dir()
+
+    @pytest.mark.parametrize(
+        "malicioso", ["../../etc", "..", "a/b", "com espaço", "", "_comeca_errado", "x" * 80]
+    )
+    def test_refuses_a_label_that_is_not_a_safe_folder_name(self, client, tmp_path, malicioso):
+        """O rótulo vira diretório — sem isto um `../` escreveria fora da fila."""
+        queue, item_id = self._queued(client, tmp_path)
+
+        with pytest.raises(InvalidClassNameError):
+            queue.label(item_id, malicioso)
+
+    @pytest.mark.parametrize("malicioso", ["../../../etc/passwd", "nao-existe", "..", ""])
+    def test_refuses_an_id_that_is_not_a_queued_item(self, client, tmp_path, malicioso):
+        """O id vem da URL e vira caminho: precisa casar com o formato do uuid4."""
+        queue, _ = self._queued(client, tmp_path)
+
+        with pytest.raises(UnknownReviewItemError):
+            queue.image_path(malicioso)
+
+    def test_reports_the_queue_as_off_when_there_is_no_directory(self):
+        assert ReviewQueue(None).stats() == {
+            "enabled": False,
+            "pending": 0,
+            "labeled": 0,
+            "oldest_pending": None,
+        }
+        assert ReviewQueue(None).pending() == []
+
+    def test_the_api_answers_503_while_the_queue_is_off(self, client):
+        """Sem REVIEW_DIR não há o que listar — e isso não é erro do cliente."""
+        for rota in ("/review", "/review/stats"):
+            assert client.get(rota).status_code in (200, 503)
+
+    def test_a_corrupt_item_does_not_break_the_listing(self, client, tmp_path):
+        queue, _ = self._queued(client, tmp_path)
+        quebrado = next((tmp_path / "pending").rglob("*.json")).parent / "quebrado.json"
+        quebrado.write_text("{ nao e json", encoding="utf-8")
+
+        assert len(queue.pending()) == 1, "o item bom continua listado"
 
 
 class TestFlywheelClosesTheLoop:

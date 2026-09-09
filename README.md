@@ -193,6 +193,10 @@ enquanto os outros dois ainda estão em coleta.
 | `GET` | `/classes` | Classes de um modelo. |
 | `POST` | `/predict` | `multipart/form-data`, campo `file`. Uma imagem. |
 | `POST` | `/predict/batch` | `multipart/form-data`, campo `files`. Várias de uma vez. |
+| `GET` | `/review/stats` | Tamanho da fila de revisão. |
+| `GET` | `/review` | Imagens aguardando diagnóstico, com o palpite do modelo. |
+| `GET` | `/review/{id}/image` | A foto de um item da fila. |
+| `POST` | `/review/{id}` | Registra o diagnóstico do agrônomo. |
 
 As rotas aceitam `?model=<chave>` ou `?platform=aerial|ground`. Sem nenhum dos
 dois, usam o modelo padrão (`DEFAULT_MODEL`).
@@ -297,6 +301,33 @@ A ação do agrônomo é arrastar o arquivo para a pasta com o nome da classe �
 nome do catálogo já é reconhecido pelo `prepare_dataset`. Detalhe completo,
 incluindo como regular `NOVELTY_SENSITIVITY`, em
 **[MODELS.md](MODELS.md#novidade)**.
+
+### Pela API, sem tocar em disco
+
+O ciclo acima funciona por linha de comando, mas o agrônomo não precisa de
+acesso ao servidor. As quatro rotas de `/review` cobrem o fluxo inteiro:
+
+```bash
+curl localhost:8000/review/stats                  # quanto está esperando
+curl localhost:8000/review                        # a lista, com o palpite do modelo
+curl localhost:8000/review/<id>/image --output f.jpg   # a foto
+curl -X POST localhost:8000/review/<id> \
+     -H 'Content-Type: application/json' \
+     -d '{"class_name": "Cigarrinha", "reviewed_by": "agrônoma Ana"}'
+```
+
+**O rótulo não precisa existir no catálogo.** Um nome novo cria uma classe nova
+em `review/labeled/<Classe>/`, e é exatamente assim que uma doença que o modelo
+não conhecia entra no dataset próprio. O `prepare_dataset` consome esse
+diretório como qualquer outro, e a imagem entra no próximo treino.
+
+Como o rótulo e o id viram caminho de arquivo, os dois são validados por formato
+fechado: o id precisa casar com o `uuid4` gerado na entrada, e a classe aceita
+apenas letras, números e `_`. Um `../` em qualquer um deles é recusado antes de
+tocar o disco.
+
+A fila só grava com `REVIEW_DIR` definido — sem ele, as rotas respondem `503`.
+Guardar imagem de cliente em disco é decisão de quem opera, não default nosso.
 
 ## Paridade entre treino e inferência
 

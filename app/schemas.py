@@ -109,6 +109,59 @@ class HealthResponse(BaseModel):
     loaded_models: list[str] = Field(description="Modelos prontos para prever agora.")
 
 
+class ReviewItem(BaseModel):
+    """Uma imagem esperando o diagnóstico do agrônomo."""
+
+    model_config = _ALLOW_MODEL_PREFIX
+
+    id: str = Field(description="Identificador do item, usado nas demais rotas de revisão.")
+    original_filename: str = Field(description="Nome do arquivo como chegou em /predict.")
+    captured_at: str = Field(description="Quando entrou na fila, em UTC.")
+    model_key: str = Field(description="Modelo que atendeu a requisição.")
+    model_guess: str = Field(
+        description="A classe que o modelo respondeu. É um palpite — foi por não confiar nele "
+        "que a imagem veio parar aqui."
+    )
+    confidence: float = Field(description="Confiança do palpite, no intervalo [0, 1].")
+    novelty_score: float | None = Field(
+        default=None,
+        description="Quanto a imagem destoa do que o modelo viu. Acima de 1,0 é novidade.",
+    )
+    probabilities: dict[str, float] = Field(
+        default_factory=dict, description="Distribuição completa, para o agrônomo ver as dúvidas."
+    )
+    reviewed_label: str | None = Field(
+        default=None,
+        description="A classe que o agrônomo determinou. Nulo enquanto o item espera revisão.",
+    )
+    reviewed_by: str | None = Field(default=None, description="Quem diagnosticou.")
+    reviewed_at: str | None = Field(default=None, description="Quando foi diagnosticado, em UTC.")
+
+
+class ReviewStats(BaseModel):
+    """Tamanho da fila — o orçamento de tempo do agrônomo."""
+
+    enabled: bool = Field(description="Se REVIEW_DIR está configurado. Sem ele nada é arquivado.")
+    pending: int = Field(description="Itens à espera de diagnóstico.")
+    labeled: int = Field(description="Itens já diagnosticados, prontos para o próximo treino.")
+    oldest_pending: str | None = Field(
+        default=None, description="Data do item mais antigo ainda na fila."
+    )
+
+
+class ReviewVerdict(BaseModel):
+    """O diagnóstico que o agrônomo devolve."""
+
+    class_name: str = Field(
+        description="A classe correta. Pode ser um nome novo, que ainda não existe no catálogo — "
+        "é assim que uma doença nova entra no dataset.",
+        examples=["Gray_Leaf_Spot", "Cigarrinha"],
+    )
+    reviewed_by: str | None = Field(
+        default=None, description="Quem diagnosticou. Fica no metadado, para rastreabilidade."
+    )
+
+
 class ErrorResponse(BaseModel):
     """Corpo padrão das respostas de erro."""
 
