@@ -27,6 +27,7 @@ from app.schemas import (
     ReviewStats,
     ReviewVerdict,
 )
+from app.severity import severity_model
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
     registry.load_all()
+    severity_model.load()
     yield
 
 

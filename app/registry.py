@@ -61,6 +61,12 @@ class ModelSpec:
     """Dataset de outro modelo do catálogo, quando este é outra arquitetura sobre
     os mesmos dados. ``None``: o dataset é ``data/<key>/``."""
 
+    measures_severity: bool = False
+    """Se a resposta traz a severidade do :mod:`app.severity`.
+
+    Só para folha de milho em close: é o que as máscaras de treino cobrem. Medir
+    lesão de café ou num tile aéreo com essa rede seria inventar número."""
+
     arch: str | None = None
     """Base convolucional. ``None``: a padrão do treino.
 
@@ -112,6 +118,7 @@ LEAF_FOLIAR = ModelSpec(
     ),
     class_names=("Blight", "Common_Rust", "Gray_Leaf_Spot", "Healthy"),
     weights_name="corn_disease_model.keras",
+    measures_severity=True,
     datasets=(
         "corn-maize-leaf-disease",
         "plantvillage-corn",
@@ -136,6 +143,7 @@ LEAF_FOLIAR_B = ModelSpec(
     ),
     class_names=LEAF_FOLIAR.class_names,
     weights_name="leaf_foliar_b.keras",
+    measures_severity=True,
     datasets=LEAF_FOLIAR.datasets,
     dataset_key=LEAF_FOLIAR.key,
     arch="efficientnetv2b0",

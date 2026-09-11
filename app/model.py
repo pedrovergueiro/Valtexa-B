@@ -194,12 +194,23 @@ class CornDiseaseModel:
         probabilities = np.clip(to_numpy(outputs).astype(np.float64), 0.0, 1.0)
         self._check_output_shape(probabilities, len(uploads))
         novelty = self._score_novelty(embeddings, len(uploads))
+        severities = self._estimate_severity(images)
 
         per_image_ms = elapsed_ms / len(uploads)
         return [
-            self._to_response(filename, row, score, per_image_ms)
-            for (filename, _), row, score in zip(uploads, probabilities, novelty, strict=True)
+            self._to_response(filename, row, score, per_image_ms, severity)
+            for (filename, _), row, score, severity in zip(
+                uploads, probabilities, novelty, severities, strict=True
+            )
         ]
+
+    def _estimate_severity(self, images: list) -> list[float | None]:
+        """Severidade do lote, só para os modelos que a medem."""
+        if not self.spec.measures_severity:
+            return [None] * len(images)
+        from app.severity import severity_model
+
+        return severity_model.estimate(images)
 
     def _score_novelty(self, embeddings: Any, expected_rows: int) -> list[float | None]:
         """Pontua a novidade do lote, ou devolve ``None`` quando indisponível."""
@@ -219,6 +230,7 @@ class CornDiseaseModel:
         probabilities: np.ndarray,
         novelty_score: float | None,
         inference_ms: float,
+        severity: float | None = None,
     ) -> PredictionResponse:
         best_index = int(np.argmax(probabilities))
         confidence = float(probabilities[best_index])
@@ -230,6 +242,7 @@ class CornDiseaseModel:
             abstained=confidence < settings.min_confidence,
             novelty_score=novelty_score,
             needs_review=_is_novel(novelty_score),
+            severity=severity,
             probabilities=[
                 ClassProbability(class_name=name, probability=float(probability))
                 for name, probability in zip(self._class_names, probabilities, strict=True)

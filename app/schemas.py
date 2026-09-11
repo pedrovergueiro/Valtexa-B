@@ -49,6 +49,16 @@ class PredictionResponse(BaseModel):
             "material que faz o dataset próprio crescer."
         ),
     )
+    severity: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Fração do quadro marcada como lesão pelo modelo de segmentação. "
+            "Aproxima a severidade da folha quando a folha preenche o quadro. "
+            "Nula quando o modelo não mede severidade ou os pesos não estão carregados."
+        ),
+    )
     probabilities: list[ClassProbability] = Field(
         description="Probabilidade de cada classe suportada, na ordem do modelo."
     )
