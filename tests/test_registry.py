@@ -64,6 +64,19 @@ class TestCatalogue:
             "Leaf_Miner_Damage",
         }
 
+    def test_second_architecture_shares_everything_but_the_base(self):
+        """O par só serve de segunda opinião se diferir onde importa, e só ali."""
+        primary, second = get_spec("leaf-foliar"), get_spec("leaf-foliar-b")
+        assert second.class_names == primary.class_names
+        assert second.data_dir == primary.data_dir
+        assert second.weights_path != primary.weights_path
+        assert second.arch is not None
+        assert second.arch != primary.arch
+
+    def test_dataset_keys_point_inside_the_catalogue(self):
+        for spec in MODEL_SPECS.values():
+            assert spec.dataset_key is None or spec.dataset_key in MODEL_SPECS
+
     def test_corn_and_coffee_do_not_share_a_weights_file(self):
         assert get_spec("leaf-foliar").weights_path != get_spec("coffee-foliar").weights_path
 

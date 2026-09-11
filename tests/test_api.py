@@ -39,6 +39,7 @@ class TestModelCatalogue:
         catalogue = client.get("/models").json()
         assert {entry["key"] for entry in catalogue} == {
             DEFAULT_MODEL,
+            "leaf-foliar-b",
             "coffee-foliar",
             ROVER,
             "aerial-canopy",

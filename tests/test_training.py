@@ -15,7 +15,14 @@ import pytest
 
 from app.config import settings
 from app.registry import get_spec
-from training.train import MONITOR, _best_metric, _validate_args, _write_labels, resolve_paths
+from training.train import (
+    DEFAULT_ARCH,
+    MONITOR,
+    _best_metric,
+    _validate_args,
+    _write_labels,
+    resolve_paths,
+)
 
 LEAF = get_spec("leaf-foliar")
 
@@ -42,6 +49,29 @@ class TestPathResolution:
 
         assert args.data_dir == tmp_path
         assert args.output == tmp_path / "meu.keras"
+
+    def test_second_architecture_shares_the_dataset_not_the_base(self):
+        args = argparse.Namespace(model="leaf-foliar-b", data_dir=None, output=None, arch=None)
+        resolve_paths(args)
+
+        assert args.data_dir == LEAF.data_dir
+        assert args.output.name == "leaf_foliar_b.keras"
+        assert args.arch == "efficientnetv2b0"
+        assert args.arch != DEFAULT_ARCH
+
+    def test_catalog_without_arch_uses_the_default(self):
+        args = argparse.Namespace(model="leaf-foliar", data_dir=None, output=None, arch=None)
+        resolve_paths(args)
+
+        assert args.arch == DEFAULT_ARCH
+
+    def test_explicit_arch_wins_over_the_catalog(self):
+        args = argparse.Namespace(
+            model="leaf-foliar-b", data_dir=None, output=None, arch=DEFAULT_ARCH
+        )
+        resolve_paths(args)
+
+        assert args.arch == DEFAULT_ARCH
 
     def test_each_model_writes_to_its_own_file(self):
         outputs = set()

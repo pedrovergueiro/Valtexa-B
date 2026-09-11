@@ -58,8 +58,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--arch",
         choices=sorted(ARCHITECTURES),
-        default=DEFAULT_ARCH,
-        help="Base convolucional. Mais pesada = mais precisa e mais lenta.",
+        default=None,
+        help=(
+            f"Base convolucional. Padrão: a do catálogo, ou {DEFAULT_ARCH}. "
+            "Mais pesada = mais precisa e mais lenta."
+        ),
     )
     parser.add_argument(
         "--img-size",
@@ -114,6 +117,11 @@ def resolve_paths(args: argparse.Namespace) -> ModelSpec:
         args.data_dir = spec.data_dir
     if args.output is None:
         args.output = spec.weights_path
+    if getattr(args, "arch", None) is None:
+        # A arquitetura é parte da identidade do modelo no catálogo: sem isto,
+        # ``--model leaf-foliar-b`` treinaria a base padrão e a "segunda
+        # opinião" sairia cópia da primeira.
+        args.arch = spec.arch or DEFAULT_ARCH
     return spec
 
 

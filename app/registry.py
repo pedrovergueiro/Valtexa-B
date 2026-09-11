@@ -57,6 +57,16 @@ class ModelSpec:
     """Se ``True``, não existe dataset público suficiente e o modelo depende de
     coleta própria em campo."""
 
+    dataset_key: str | None = None
+    """Dataset de outro modelo do catálogo, quando este é outra arquitetura sobre
+    os mesmos dados. ``None``: o dataset é ``data/<key>/``."""
+
+    arch: str | None = None
+    """Base convolucional. ``None``: a padrão do treino.
+
+    Faz parte da identidade do modelo: treinar o ``leaf-foliar-b`` com a base do
+    ``leaf-foliar`` produziria uma cópia, não uma segunda opinião."""
+
     notes: str = ""
 
     @property
@@ -89,7 +99,7 @@ class ModelSpec:
     @property
     def data_dir(self) -> Path:
         """Diretório do dataset organizado por classe, usado pelo treino."""
-        return settings.data_dir / self.key
+        return settings.data_dir / (self.dataset_key or self.key)
 
 
 LEAF_FOLIAR = ModelSpec(
@@ -112,6 +122,27 @@ LEAF_FOLIAR = ModelSpec(
     notes=(
         "É o modelo que sustenta o piloto comercial: dataset público maduro, "
         "treina em minutos e é o único pronto para rodar hoje."
+    ),
+)
+
+LEAF_FOLIAR_B = ModelSpec(
+    key="leaf-foliar-b",
+    platform=Platform.ANY,
+    title="Diagnóstico foliar em close — segunda arquitetura",
+    summary=(
+        "Mesmas classes e mesmo dataset do leaf-foliar, com outra base "
+        "convolucional (EfficientNetV2B0). Existe para ser a segunda opinião da "
+        "dupla validação da plataforma."
+    ),
+    class_names=LEAF_FOLIAR.class_names,
+    weights_name="leaf_foliar_b.keras",
+    datasets=LEAF_FOLIAR.datasets,
+    dataset_key=LEAF_FOLIAR.key,
+    arch="efficientnetv2b0",
+    notes=(
+        "Arquitetura diferente não garante independência: os dois aprendem do "
+        "mesmo dado e herdam os mesmos rótulos contraditórios. A independência é "
+        "medida (ver MODELS.md), não presumida."
     ),
 )
 
@@ -183,7 +214,8 @@ AERIAL_CANOPY = ModelSpec(
 )
 
 MODEL_SPECS: dict[str, ModelSpec] = {
-    spec.key: spec for spec in (LEAF_FOLIAR, COFFEE_FOLIAR, ROVER_UNDERSTORY, AERIAL_CANOPY)
+    spec.key: spec
+    for spec in (LEAF_FOLIAR, LEAF_FOLIAR_B, COFFEE_FOLIAR, ROVER_UNDERSTORY, AERIAL_CANOPY)
 }
 
 DEFAULT_PLATFORM_MODEL: dict[Platform, str] = {
