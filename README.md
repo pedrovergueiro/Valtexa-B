@@ -215,6 +215,7 @@ curl -F "file=@colmo.jpg" "http://localhost:8000/predict?platform=ground"
   "abstained": false,
   "novelty_score": 0.42,
   "needs_review": false,
+  "severity": 0.18,
   "probabilities": [
     { "class_name": "Blight", "probability": 0.011 },
     { "class_name": "Common_Rust", "probability": 0.973 },
@@ -229,6 +230,13 @@ curl -F "file=@colmo.jpg" "http://localhost:8000/predict?platform=ground"
 que o modelo viu no treino — inclusive quando ele responde com confiança alta
 mesmo assim. `needs_review` vira `true` nesse caso; ver
 [ciclo de dados próprio](#ciclo-de-dados-próprio).
+
+`severity` é a fração do quadro que o modelo de segmentação marcou como lesão
+(`models/leaf_severity.keras`, treinado por `training.train_severity`). É área
+lesionada **no quadro**: aproxima a severidade da folha quando ela preenche a
+imagem, que é a premissa do `leaf-foliar`. Só os modelos de folha de milho a
+medem; nos demais, e sem os pesos, vem `null`. Métricas em
+[`MODELS.md`](MODELS.md#severidade).
 
 O `/predict/batch` processa o lote inteiro numa única passada e acrescenta um
 `summary` com a contagem por classe e um `needs_review_count` — útil para fechar

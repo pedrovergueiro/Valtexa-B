@@ -49,6 +49,7 @@ cada modelo saiba o que **não** consegue responder — exatamente o que um soft
 | Modelo | Cultura | Plataforma | Classes | Estado | Papel |
 | --- | --- | --- | --- | --- | --- |
 | [`leaf-foliar`](#leaf-foliar) | Milho | qualquer | 4 | **Treinado** · teste 0,9555 | Piloto comercial |
+| [`leaf-foliar-b`](#leaf-foliar-b) | Milho | qualquer | 4 | **Treinado** · teste 0,9601 | Segunda opinião da dupla validação |
 | [`coffee-foliar`](#coffee-foliar) | Café | qualquer | 5 | **Treinado** · teste 0,9499 | Diferencial estratégico |
 | [`rover-understory`](#rover-understory) | Milho | rover | 8 | **Em quarentena** · precisa de coleta | Produto principal |
 | [`aerial-canopy`](#aerial-canopy) | Milho | drone | 2 | Precisa de coleta | Triagem |
@@ -217,6 +218,90 @@ rededuplique a `--max-distance 4` antes de retreinar.
 - Softmax de 4 classes: uma folha com duas doenças ao mesmo tempo é forçada a uma só.
 - Sem classe "outro": foto de solo ou de céu sai como doença. Use `MIN_CONFIDENCE`
   (ver [abstenção](#abstenção)).
+
+---
+
+<a id="leaf-foliar-b"></a>
+## 1b. `leaf-foliar-b` — a segunda opinião
+
+### O que responde
+
+O mesmo que o `leaf-foliar`: as mesmas quatro classes, sobre o mesmo dataset
+consolidado. Muda só a base convolucional — EfficientNetV2B0 no lugar da
+MobileNetV2 —, e é só isso que muda, de propósito.
+
+Existe por causa da dupla validação da plataforma (`VALTEXA-SAAS`): um
+diagnóstico só chega a `AI_VALIDATED` quando duas análises **independentes**
+concordam. Com um modelo só, tudo vai para a fila do agrônomo.
+
+### Ficha técnica
+
+| | |
+| --- | --- |
+| Base | EfficientNetV2B0 (ImageNet), com `include_preprocessing=False` |
+| Treino | cabeça com a base congelada; depois as 40 camadas finais liberadas |
+| Entrada | 224 × 224, escala `[-1, 1]` — o mesmo pré-processamento do `leaf-foliar` |
+| Pesos | `models/leaf_foliar_b.keras` (~40 MB) |
+| Dataset | o do `leaf-foliar` (`dataset_key`), sem cópia |
+
+### Como treinar
+
+```bash
+python -m training.train --model leaf-foliar-b --tta
+python -m training.fit_novelty --model leaf-foliar-b
+```
+
+A arquitetura vem do catálogo; `--arch` só serve para experimentar.
+
+### Resultado medido — 11/09/2026
+
+Teste isolado de 10% (1.978 imagens). Pela semente e pelo corte, ele está
+contido no teste de 15% do `leaf-foliar`: nenhum dos dois modelos viu estas
+imagens.
+
+| | Acurácia | macro-F1 | Pior classe |
+| --- | ---: | ---: | --- |
+| `leaf-foliar-b` | 0,9535 | 0,9319 | Gray_Leaf_Spot (recall 0,893) |
+| `leaf-foliar-b` + TTA | **0,9601** | **0,9421** | Gray_Leaf_Spot (recall 0,893) |
+
+### Independência em relação ao `leaf-foliar` — medida em 11/09/2026
+
+Arquitetura diferente não prova independência: os dois aprendem dos mesmos
+rótulos, inclusive dos contraditórios. A medição roda os dois modelos no mesmo
+teste isolado e, à parte, um par de 3 classes treinado **sem** `Gray_Leaf_Spot`
+diante de 400 imagens dela.
+
+| Par de produção (1.978 imagens) | |
+| --- | ---: |
+| acurácia `leaf-foliar` / `leaf-foliar-b` | 95,4% / 95,3% |
+| média das probabilidades dos dois | 96,1% |
+| discordam | 5,2% |
+| acurácia quando concordam | **98,1%** |
+| erros do `leaf-foliar` que a discordância pega | **60%** |
+| erros em que os dois erram igual | 36 de 90 |
+
+| Doença retida (400 imagens de `Gray_Leaf_Spot`) | |
+| --- | ---: |
+| discordância entre os dois | 32,0% |
+| confiança baixa (< 0,7) em algum dos dois | 26,5% |
+| novidade do primário | 3,5% |
+| **os três juntos** | **45,0%** |
+
+Diante do que nunca viram, os dois erram diferente: o primário dividiu a
+cercosporiose entre ferrugem (186) e helmintosporiose (174); o segundo puxou
+para helmintosporiose (267). Por isso a discordância é o maior sinal isolado —
+na medição de 08/09, o modelo sozinho interceptava 19%.
+
+**Conclusão: parcialmente independente.** Vale como segunda opinião — quando
+concordam, o erro cai de 4,6% para 1,9%, e a discordância é sinal real —, mas 40%
+dos erros são compartilhados e 55% de uma doença nunca vista ainda passam
+concordantes. A plataforma só conta o par como independente quando isso é
+declarado (`SECONDARY_MODEL_INDEPENDENT`), e a recomendação é repetir esta
+medição com imagens da própria frota antes.
+
+A média das probabilidades (96,1%) é melhor que os dois sozinhos, mas não é o
+uso aqui: um *ensemble* devolve uma resposta só; o par existe para mostrar quando
+as duas discordam.
 
 ---
 
@@ -544,6 +629,93 @@ existe para calibrar o próprio voo.
 **Recall**, com folga. Um falso positivo custa uma passagem do rover. Um falso
 negativo é um foco que não foi visto. Escolha o limiar pela curva
 precisão/recall, não pelo padrão de 0,5.
+
+---
+
+<a id="severidade"></a>
+## Severidade — área lesionada no quadro
+
+### O que responde
+
+Quanto do quadro é lesão, em `[0, 1]`. Os classificadores dizem **qual** doença;
+a severidade diz **quanto**. Sai no mesmo `/predict` dos modelos de folha de
+milho (`leaf-foliar` e `leaf-foliar-b`), no campo `severity`, calculada na mesma
+requisição.
+
+É área **no quadro**, não na folha: aproxima a severidade da folha quando ela
+preenche a imagem, que é a premissa dos modelos foliares. Numa foto com solo ou
+céu, o número sai menor do que a severidade real. Medir sobre a área da folha
+exigiria segmentar a folha também, e não há máscara pública de folha de milho
+fotografada em campo.
+
+### Ficha técnica
+
+| | |
+| --- | --- |
+| Arquitetura | U-Net com encoder MobileNetV2 (ImageNet), saída sigmoide por pixel |
+| Entrada | 224 × 224, escala `[-1, 1]` — o mesmo pré-processamento dos classificadores |
+| Perda | entropia cruzada binária + Dice |
+| Limiar | pixel com probabilidade acima de 0,5 conta como lesão |
+| Pesos | `models/leaf_severity.keras`, com `leaf_severity.metrics.json` ao lado |
+
+### Dados
+
+- **PlantSeg, milho** — máscaras de lesão de ferrugem, cercosporiose e
+  helmintosporiose, com o `train`/`test` do próprio dataset. `corn_smut` fica de
+  fora: carvão ataca a espiga, e segmentá-lo ensinaria o modelo a marcar espiga
+  como lesão foliar.
+- **Folhas saudáveis do `leaf-foliar`, com máscara vazia** — sem elas o modelo só
+  vê imagens com lesão e aprende a sempre achar alguma.
+
+| | Treino | Teste |
+| --- | ---: | ---: |
+| PlantSeg, lesão foliar de milho | 332 | 82 |
+| saudáveis, máscara vazia | 320 | 80 |
+
+15% do treino vira validação, que escolhe a época; o teste não decide nada.
+
+### Como treinar
+
+```bash
+python -m training.train_severity --plantseg ~/valtexa-raw/plantseg/plantseg
+```
+
+### Resultado medido — 11/09/2026
+
+No teste do PlantSeg e nas saudáveis separadas, nenhum dos dois usado para
+escolher época. "Erro" é a diferença absoluta entre a fração estimada e a da
+máscara, em pontos percentuais do quadro.
+
+| | n | Dice | Erro médio | Erro p90 | Correlação | Real → estimada |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| **com lesão** | 82 | 0,68 | **7,6** | 22,7 | **0,89** | 28,7% → 25,4% |
+| ferrugem | 35 | 0,80 | 7,1 | 22,6 | 0,90 | 39,3% → 37,1% |
+| cercosporiose | 21 | 0,65 | 11,8 | 33,2 | 0,85 | 30,7% → 24,0% |
+| helmintosporiose | 26 | 0,54 | 4,8 | 10,1 | 0,79 | 12,6% → 10,6% |
+
+| Saudáveis | |
+| --- | ---: |
+| n | 80 |
+| lesão falsa média | 0,01% |
+| com mais de 5% de lesão falsa | 0 |
+
+Leitura: o número acompanha a severidade real (correlação 0,89) e tende a
+subestimá-la um pouco, mais na cercosporiose — cujas manchas pequenas e
+retangulares se perdem na redução para 224 px. Um erro de 7,6 pontos serve para
+separar "pouca", "moderada" e "muita" lesão; não serve para uma escala de 10
+graus. A lesão falsa quase nula nas saudáveis é otimista: elas vêm da mesma
+origem das saudáveis do treino, e uma folha sadia fotografada em campo, com
+reflexo e sujeira, ainda não foi medida.
+
+### Limitações da severidade
+
+- Área no quadro, não na folha (acima).
+- Poucas centenas de máscaras de treino: a máscara pública é o gargalo, não a
+  arquitetura.
+- Não é a escala diagramática de um fitopatologista, e ainda não foi comparada
+  com uma. Por isso a plataforma mostra o número ao agrônomo e **não** o usa na
+  regra de decisão.
+- Um canal só: numa folha com duas doenças, a área é a soma das duas.
 
 ---
 
@@ -1012,6 +1184,13 @@ pasta reais nós não inspecionamos.
 ## Roadmap
 
 - [ ] Treinar `leaf-foliar` e `coffee-foliar`, medir cada um num conjunto de teste próprio.
+- [x] Segunda arquitetura do `leaf-foliar` para a dupla validação, com a
+      independência medida — ver [`leaf-foliar-b`](#leaf-foliar-b).
+- [ ] Repetir a medição de independência com imagens da própria frota.
+- [x] Severidade por segmentação de lesão, como área no quadro — ver
+      [severidade](#severidade).
+- [ ] Severidade sobre a área da folha (segmentar a folha além da lesão) e
+      comparação com a escala diagramática de um fitopatologista.
 - [ ] Coleta própria de café no Sul de Minas — maior prioridade de diferenciação.
 - [ ] `aerial-canopy` v1 a partir do `disease-nlb-drone` + tiling.
 - [ ] Coleta de campo para as 4 classes exclusivas do rover.
