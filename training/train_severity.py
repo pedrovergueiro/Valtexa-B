@@ -242,12 +242,13 @@ def _batches(images, masks, batch_size: int, seed: int, augment: bool):
 
 
 def predict_masks(model, images: np.ndarray, batch_size: int = 16) -> np.ndarray:
-    from app.keras_backend import to_numpy
+    from app.keras_backend import no_grad, to_numpy
 
     outputs = []
     for start in range(0, len(images), batch_size):
         batch = scale_to_unit_range(images[start : start + batch_size].astype(np.float32))
-        outputs.append(to_numpy(model(batch, training=False)))
+        with no_grad():  # sem isto o torch grava o grafo de gradientes a cada lote
+            outputs.append(to_numpy(model(batch, training=False)))
     return np.concatenate(outputs)
 
 

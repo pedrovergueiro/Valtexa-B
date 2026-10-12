@@ -22,18 +22,25 @@ Os datasets públicos repetem imagem o tempo todo. Três casos reais no catálog
 Por isso a comparação é por *assinatura perceptual* (dHash), e não por hash do
 arquivo: o dHash sobrevive a recompressão, redimensionamento e mudança de
 formato, que é justamente como as cópias costumam aparecer.
+
+O dHash, porém, só **indica** o par; quem confirma é a miniatura colorida (ver
+:data:`MAX_THUMB_DIFFERENCE`). Sem essa confirmação, folhas diferentes
+fotografadas sobre papel liso viram "a mesma imagem".
 """
 
 from __future__ import annotations
 
 import argparse
+import functools
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 
 from app.registry import MODEL_SPECS, get_spec
+from training.background import MAX_BORDER_SPREAD, otsu_threshold, paper_color
 from training.prepare_dataset import is_image
 
 HASH_SIZE = 8
@@ -46,6 +53,27 @@ Zero pega só cópia exata (mesma imagem recomprimida). Quatro pega também o
 quadro seguinte de um vídeo e o mesmo enquadramento com leve variação de luz.
 Acima de oito o filtro começa a apagar folhas genuinamente diferentes da mesma
 classe, que é dado bom sendo jogado fora.
+"""
+
+THUMB_SIZE = 16
+"""Lado da miniatura colorida que confirma cada par indicado pelo dHash."""
+
+MAX_THUMB_DIFFERENCE = 8.0
+"""Diferença média máxima (0-255, por pixel e canal) entre as miniaturas de duas cópias.
+
+O dHash olha só o gradiente de uma miniatura 9x8 em tons de cinza — e toda
+folha destacada sobre papel liso tem o mesmo gradiente: claro, escuro, claro.
+No citros (limão e laranja fotografados sobre papel), a distância 4 com união
+transitiva juntou as 12 classes num grupo só e ia apagar 68% do dataset; mesmo
+a distância 0 juntava folhas diferentes de classes diferentes.
+
+A confirmação compara a miniatura colorida **só da folha** (ver
+:func:`leaf_box`): com o quadro inteiro, uma folha pequena sobre papel cinza
+ocupa 5% da miniatura e o papel decide sozinho — folhas diferentes empatavam e
+se encadeavam em grupos de centenas. Medido em 6.000 pares que o dHash indicou
+no citros: entre classes, **nenhum** par fica até 10 (mediana 39); dentro da
+classe, 9,1% ficam até 6 e 9,3% até 10 — um vão limpo entre a mesma folha
+fotografada em sequência e folhas diferentes.
 """
 
 BAND_COUNT = 4
@@ -71,6 +99,17 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_MAX_DISTANCE,
         help="Distância de Hamming máxima entre duas cópias.",
     )
+    parser.add_argument(
+        "--max-thumb-difference",
+        type=float,
+        default=MAX_THUMB_DIFFERENCE,
+        help="Diferença média máxima entre as miniaturas coloridas de duas cópias.",
+    )
+    parser.add_argument(
+        "--no-confirm",
+        action="store_true",
+        help="Aceita o par só pelo dHash, sem conferir a miniatura (comportamento antigo).",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Só relata o que seria apagado.")
     return parser.parse_args()
 
@@ -92,6 +131,66 @@ def dhash(path: Path, size: int = HASH_SIZE) -> np.uint64 | None:
 
     bits = (pixels[:, 1:] > pixels[:, :-1]).flatten()
     return np.packbits(bits).view(">u8")[0]
+
+
+def leaf_box(image: Image.Image, work: int = 128) -> tuple[int, int, int, int] | None:
+    """Caixa do que não é papel, ou ``None`` se o fundo não for liso.
+
+    Parecida com :func:`training.background.leaf_mask`, mas sem o tamanho
+    mínimo de folha: aqui a folha minúscula no meio de uma folha A4 é
+    justamente o caso que precisa da caixa.
+    """
+    small = np.asarray(image.resize((work, work), Image.Resampling.BILINEAR), dtype=np.float32)
+    color, spread = paper_color(small)
+    if spread > MAX_BORDER_SPREAD:
+        return None
+    distance = np.sqrt(((small - color) ** 2).sum(axis=2))
+    foreground = distance > max(otsu_threshold(distance), 12.0)
+    if foreground.mean() < 0.002:
+        return None
+    ys, xs = np.nonzero(foreground)
+    # Percentis e não min/max: um cisco no papel não estica a caixa.
+    x0, x1 = np.percentile(xs, [0.5, 99.5])
+    y0, y1 = np.percentile(ys, [0.5, 99.5])
+    sx, sy = image.width / work, image.height / work
+    return int(x0 * sx), int(y0 * sy), int((x1 + 1) * sx), int((y1 + 1) * sy)
+
+
+def thumbnail(path: Path, size: int = THUMB_SIZE) -> np.ndarray | None:
+    """Miniatura colorida ``(size, size, 3)`` da folha, ou ``None`` se não abrir.
+
+    Com fundo liso, a miniatura é só da caixa da folha; sem ele (foto de
+    campo), do quadro inteiro.
+    """
+    try:
+        with Image.open(path) as source:
+            image = source.convert("RGB")
+    except (UnidentifiedImageError, OSError, ValueError):
+        return None
+    box = leaf_box(image)
+    if box is not None:
+        image = image.crop(box)
+    return np.asarray(image.resize((size, size), Image.Resampling.BOX), dtype=np.float32)
+
+
+def thumbnail_confirmation(max_difference: float) -> Callable[[Path, Path], bool]:
+    """Confirma um par se as miniaturas coloridas diferem até ``max_difference``.
+
+    Cada miniatura é calculada uma vez só, e só para as imagens que o dHash
+    indicou — a grande maioria do dataset nunca chega a ser relida.
+    """
+
+    @functools.cache
+    def cached(path: Path) -> np.ndarray | None:
+        return thumbnail(path)
+
+    def same(a: Path, b: Path) -> bool:
+        first, second = cached(a), cached(b)
+        if first is None or second is None:
+            return False
+        return float(np.abs(first - second).mean()) <= max_difference
+
+    return same
 
 
 def _bands(signature: np.uint64) -> list[int]:
@@ -170,8 +269,17 @@ def _candidate_buckets(signatures: dict[Path, np.uint64]) -> dict[tuple[int, int
     return buckets
 
 
-def group_duplicates(signatures: dict[Path, np.uint64], max_distance: int) -> list[list[Path]]:
-    """Agrupa as imagens que são a mesma coisa."""
+def group_duplicates(
+    signatures: dict[Path, np.uint64],
+    max_distance: int,
+    confirm: Callable[[Path, Path], bool] | None = None,
+) -> list[list[Path]]:
+    """Agrupa as imagens que são a mesma coisa.
+
+    Args:
+        confirm: segunda opinião sobre cada par que o dHash aproximou; o par só
+            é unido se ela concordar. ``None`` aceita o dHash sozinho.
+    """
     grupos = _UnionFind(signatures)
 
     for candidates in _candidate_buckets(signatures).values():
@@ -182,6 +290,7 @@ def group_duplicates(signatures: dict[Path, np.uint64], max_distance: int) -> li
                 if (
                     grupos.find(a) != grupos.find(b)
                     and _distance(signatures[a], signatures[b]) <= max_distance
+                    and (confirm is None or confirm(a, b))
                 ):
                     grupos.union(a, b)
 
@@ -206,7 +315,8 @@ def main() -> None:
         for path in unreadable[:5]:
             print(f"    {path.name}")
 
-    groups = group_duplicates(signatures, args.max_distance)
+    confirm = None if args.no_confirm else thumbnail_confirmation(args.max_thumb_difference)
+    groups = group_duplicates(signatures, args.max_distance, confirm)
 
     # Um grupo espalhado por classes diferentes é a mesma imagem com dois
     # rótulos: um dos dois está errado e não dá para saber qual. Manter a imagem

@@ -108,6 +108,25 @@ class TestNoveltyThroughTheApi:
         assert body["needs_review"] is True
         assert body["novelty_score"] > 1.0
 
+    def test_flagged_image_without_client_consent_stays_out_of_the_queue(
+        self, client, tmp_path, monkeypatch
+    ):
+        """Brief, seção 32: X-Training-Consent: 0 mantém a imagem fora do treino."""
+        import app.main
+
+        queue = ReviewQueue(tmp_path / "revisao")
+        monkeypatch.setattr(app.main, "review_queue", queue)
+        self._load(FAR_AWAY)
+        arquivo = {"file": ("nova.jpg", make_image_bytes(), "image/jpeg")}
+
+        recusado = client.post("/predict", files=arquivo, headers={"X-Training-Consent": "0"})
+        assert recusado.json()["needs_review"] is True
+        assert queue.pending() == []
+
+        arquivo = {"file": ("nova.jpg", make_image_bytes(), "image/jpeg")}
+        client.post("/predict", files=arquivo, headers={"X-Training-Consent": "1"})
+        assert len(queue.pending()) == 1
+
     def test_does_not_flag_a_familiar_image(self, client):
         self._load(KNOWN)
         body = client.post(

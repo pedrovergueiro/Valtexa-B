@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 
 import numpy as np
@@ -45,6 +46,27 @@ def to_numpy(values: Any) -> np.ndarray:
     if callable(detach):  # tensor do torch, possivelmente na GPU
         return detach().cpu().numpy()
     return np.asarray(values)
+
+
+def no_grad() -> AbstractContextManager:
+    """Contexto de inferência: sem grafo de gradientes.
+
+    Chamar um modelo Keras direto — ``model(lote)``, como a API faz para fugir do
+    overhead do ``predict()`` em lotes pequenos — **não** desliga o autograd no
+    backend torch. Medido em 26/09/2026: a saída vinha com ``requires_grad`` e
+    ``SoftmaxBackward0``, ou seja, cada requisição montava e segurava o grafo de
+    gradientes de uma rede inteira, só para jogá-lo fora. Na CPU, o mesmo lote
+    ficou 28% mais rápido sem isso; na GPU, a memória retida é o que enche a placa.
+
+    Nos outros backends, e sem torch instalado, não faz nada.
+    """
+    if configure() != "torch":
+        return nullcontext()
+    try:
+        import torch
+    except ImportError:
+        return nullcontext()
+    return torch.no_grad()
 
 
 def configure() -> str:

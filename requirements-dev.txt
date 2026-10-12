@@ -1,5 +1,9 @@
 -r requirements-training.txt
 
 pytest==8.3.3
-httpx==0.27.2
+# O starlette 1.7 usa httpx 2 no TestClient e recusa o httpx 0.x com uma
+# mensagem clara. Sem este pacote, a coleta de testes morre no conftest.
+httpx2==2.13.1
 ruff==0.6.9
+# Os testes do ONNX Runtime montam grafos minúsculos na hora.
+onnx==1.23.0

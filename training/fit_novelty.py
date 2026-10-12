@@ -15,13 +15,14 @@ Sem este passo o modelo funciona normalmente — só não sabe dizer o que nunca
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import numpy as np
 
 from app.inference.novelty import DEFAULT_PERCENTILE, DEFAULT_SHRINKAGE, NoveltyReference
-from app.keras_backend import to_numpy
-from app.registry import MODEL_SPECS, ModelSpec, get_spec
+from app.keras_backend import no_grad, to_numpy
+from app.registry import MODEL_SPECS, get_spec
 
 
 def parse_args() -> argparse.Namespace:
@@ -91,7 +92,7 @@ def main() -> None:
     inputs = model.inputs
     embedder = keras.Model(inputs[0] if len(inputs) == 1 else inputs, embedding_layer.output)
     dataset, class_names = load_labeled_dataset(data_dir, spec.img_size, args.batch_size)
-    _warn_on_class_mismatch(spec, class_names)
+    _refuse_class_mismatch(weights, class_names)
 
     embeddings, labels = _collect(embedder, dataset, args.max_images)
     print(f"\n{len(embeddings)} embeddings de {embeddings.shape[1]} dimensões coletados.")
@@ -131,7 +132,8 @@ def _collect(embedder, dataset, max_images: int) -> tuple[np.ndarray, np.ndarray
         # O lote sai do ``tf.data`` como tensor do TensorFlow. Passar por numpy
         # no meio do caminho é o que deixa o mesmo código alimentar qualquer
         # backend do Keras, em vez de só o TensorFlow.
-        embedded = embedder(np.asarray(images), training=False)
+        with no_grad():  # sem isto o torch grava autograd e estoura a GPU
+            embedded = embedder(np.asarray(images), training=False)
         chunks.append(to_numpy(embedded).astype(np.float64))
         label_chunks.append(np.asarray(labels))
         total += len(labels)
@@ -145,13 +147,26 @@ def _collect(embedder, dataset, max_images: int) -> tuple[np.ndarray, np.ndarray
     return np.vstack(chunks), np.concatenate(label_chunks)
 
 
-def _warn_on_class_mismatch(spec: ModelSpec, class_names: list[str]) -> None:
-    if tuple(class_names) != tuple(spec.class_names):
-        print(
-            f"Aviso: classes do diretório ({', '.join(class_names)}) diferem do "
-            f"catálogo ({', '.join(spec.class_names)}).\n"
-            "A referência é gravada com a ordem do diretório, que precisa bater "
-            "com a do .labels.json usado no treino."
+def _refuse_class_mismatch(weights: Path, class_names: list[str]) -> None:
+    """Recusa calibrar com classes que não são as dos pesos.
+
+    Era só um aviso, e foi assim que a novidade do ``leaf-foliar`` ficou desligada
+    em produção de 08/09 a 26/09/2026: o experimento da doença retida calibrou
+    com o diretório de 3 classes e gravou por cima da referência dos pesos de 4.
+    A API recusa uma referência cujas classes não batem — corretamente —, mas a
+    recusa só aparecia num log de erro, e o modelo seguiu servindo sem novidade.
+    """
+    labels_path = weights.with_suffix(".labels.json")
+    if not labels_path.exists():
+        return
+    expected = json.loads(labels_path.read_text(encoding="utf-8"))
+    if list(class_names) != list(expected):
+        raise SystemExit(
+            f"Classes do diretório ({', '.join(class_names)}) diferem das dos pesos "
+            f"({', '.join(expected)}, em {labels_path.name}).\n"
+            "A API ignoraria esta referência e o modelo ficaria sem novidade. "
+            "Para um experimento, passe --weights com os pesos dele: a referência "
+            "vai para o lado deles, não para o de produção."
         )
 
 

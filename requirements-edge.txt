@@ -1,0 +1,26 @@
+# API servindo pelo ONNX Runtime (INFERENCE_RUNTIME=onnx): sem Keras e sem torch.
+#
+# É o pacote da ground station. O torch com CUDA passa de 2 GB instalado; o
+# onnxruntime tem dezenas de MB e roda em CPU ou em GPU (onnxruntime-gpu).
+# Os modelos precisam ter sido exportados antes, no ambiente de treino:
+#   python -m training.export_onnx --model leaf-foliar
+#   python -m training.export_onnx --severity
+# e a pasta models/ leva os .onnx, os .labels.json e as referências
+# (.novelty.npz, .quality.json, .conformal.json) — os .keras podem ficar para trás.
+#
+# O portão de enquadramento (app/framing.py) também roda aqui, pela torre de visão
+# exportada (python -m training.export_onnx --framing): leve junto da pasta models/
+# o framing_vision.onnx (372 MB) e o framing.npz. Sem eles, 'framing' vem nulo.
+#
+# Modelo que só tem .keras na pasta (sem .onnx) não derruba a API: sem o Keras
+# instalado, só ele responde 503 e os demais sobem normalmente.
+
+fastapi==0.141.1
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+pydantic==2.9.2
+pydantic-settings==2.5.2
+pillow==10.4.0
+numpy==2.5.3
+anyio==4.15.1
+onnxruntime==1.30.0

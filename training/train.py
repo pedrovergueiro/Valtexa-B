@@ -103,6 +103,17 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Onde cachear as imagens decodificadas. Acelera as épocas seguintes.",
     )
+    parser.add_argument(
+        "--backgrounds",
+        type=Path,
+        default=None,
+        help=(
+            "Pasta de fotos de fundo real (ex.: quadros de pomar). Com ela, folhas "
+            "fotografadas sobre papel são coladas sobre esses fundos no treino."
+        ),
+    )
+    parser.add_argument("--background-prob", type=float, default=0.7)
+    parser.add_argument("--background-count", type=int, default=1500)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument(
         "--output", type=Path, default=None, help="Padrão: o caminho de pesos do modelo."
@@ -156,6 +167,8 @@ def main() -> None:
         args.seed,
         test_split=args.test_split,
         cache_dir=args.cache_dir,
+        backgrounds=_backgrounds(args, img_size),
+        background_prob=args.background_prob,
     )
     _report_class_order(spec, class_names)
 
@@ -345,6 +358,20 @@ def _best_metric(history) -> float:
     if not values:
         raise SystemExit(f"Métrica {MONITOR!r} ausente no histórico — verifique o dataset.")
     return float(max(values))
+
+
+def _backgrounds(args: argparse.Namespace, img_size: int):
+    """Os recortes de fundo da troca de fundo, se ``--backgrounds`` foi dado."""
+    if args.backgrounds is None:
+        return None
+    from training.background import load_backgrounds
+
+    crops = load_backgrounds(args.backgrounds, img_size, args.background_count, args.seed)
+    print(
+        f"Troca de fundo: {len(crops)} recortes de {args.backgrounds}, "
+        f"probabilidade {args.background_prob:.0%} por imagem de treino."
+    )
+    return crops
 
 
 def _report_class_order(spec: ModelSpec, class_names: list[str]) -> None:

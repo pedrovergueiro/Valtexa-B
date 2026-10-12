@@ -48,14 +48,20 @@ cada modelo saiba o que **não** consegue responder — exatamente o que um soft
 
 | Modelo | Cultura | Plataforma | Classes | Estado | Papel |
 | --- | --- | --- | --- | --- | --- |
+| [`banana-foliar`](#banana-foliar) | Banana | rover / qualquer | 5 | **Treinado** · campo 0,829 · teste 0,977 | Folhas baixas no rover |
+| `banana-foliar-cc` | Banana | rover / qualquer | 5 | **Treinado** · campo 0,592 · teste 0,985 | Versão comercial (só CC BY) |
+| [`citrus-foliar`](#citrus-foliar) | Citros | rover / qualquer | 12 | **Treinado** · campo 0,969 · teste 0,884 | Copa baixa no rover |
+| `citrus-foliar-cc` | Citros | rover / qualquer | 12 | **Treinado** · campo 0,695 · teste 0,874 | Versão comercial (só CC BY) |
 | [`leaf-foliar`](#leaf-foliar) | Milho | qualquer | 4 | **Treinado** · teste 0,9555 | Piloto comercial |
 | [`leaf-foliar-b`](#leaf-foliar-b) | Milho | qualquer | 4 | **Treinado** · teste 0,9601 | Segunda opinião da dupla validação |
 | [`coffee-foliar`](#coffee-foliar) | Café | qualquer | 5 | **Treinado** · teste 0,9499 | Diferencial estratégico |
 | [`rover-understory`](#rover-understory) | Milho | rover | 8 | **Em quarentena** · precisa de coleta | Produto principal |
 | [`aerial-canopy`](#aerial-canopy) | Milho | drone | 2 | Precisa de coleta | Triagem |
 
-Acurácia sobre conjunto de teste isolado, com TTA, medida em 08/09/2026. Cada
-número vem com a sua ressalva na seção do modelo — leia antes de citar.
+Acurácia sobre conjunto de teste isolado, com TTA. Para banana e citros, o
+número a citar é o **campo** — recortes na escala do rover de fotos que nenhum
+treino viu ([teste de campo](#teste-de-campo-rover)). Cada número vem com a sua
+ressalva na seção do modelo — leia antes de citar.
 
 ```bash
 curl http://localhost:8000/models        # catálogo + quais estão carregados
@@ -217,7 +223,14 @@ rededuplique a `--max-distance 4` antes de retreinar.
   ele não funciona (ver [zoom e detecção por lesão](#zoom-e-deteccao)).
 - Softmax de 4 classes: uma folha com duas doenças ao mesmo tempo é forçada a uma só.
 - Sem classe "outro": foto de solo ou de céu sai como doença. Use `MIN_CONFIDENCE`
-  (ver [abstenção](#abstenção)).
+  (ver [abstenção](#abstenção)) e o portão de enquadramento
+  ([README](README.md#enquadramento)).
+- **388 máscaras de segmentação do PlantSeg estão no dataset como fotos**
+  (`Common_Rust` 163, `Blight` 127, `Gray_Leaf_Spot` 98; 55 no teste de 15%).
+  Medido em 26/09/2026: o modelo acerta 80% delas — aprendeu a diagnosticar
+  imagem preta. Sem elas, a acurácia no mesmo teste sobe de 95,49% para 95,78%
+  com TTA; o número publicado não estava inflado. Saem no próximo retreino
+  (ver [README](README.md#imagens-quase-pretas-no-dataset)).
 
 ---
 
@@ -420,6 +433,54 @@ Número honesto, mas leia junto com a limitação de origem: a maior parte do qu
 sobrou ainda vem da fazenda única no Quênia, a 128×128. **Espere queda em lavoura
 brasileira** — é exatamente o que a coleta no Sul de Minas existe para corrigir.
 
+<a id="segunda-leitura-do-cafe"></a>
+### Segunda leitura: a cabeça dNATY com o BRACOL — 01/10/2026
+
+A queda em foto de outra fonte foi medida (6,5%, ver as limitações) e tinha causa
+concreta: as **únicas** folhas inteiras sobre fundo branco do dataset eram 73 folhas de
+phoma do BRACOL, e o modelo aprendeu "folha inteira em fundo branco = phoma" — o
+bicho-mineiro externo virava phoma em 181 de 257 fotos.
+
+A correção não retreina a CNN. Uma rede pequena lê o embedding SigLIP que o portão já
+calcula (ver a [segunda leitura](README.md#segunda-leitura-cabeças-sobre-o-embedding-do-portão)),
+com a arquitetura buscada pelo dNATY (768 → 1176 → 64 → 64 → 256 → 5) e treinada com o
+`coffee-foliar` **mais o BRACOL** (CC BY 4.0, Espírito Santo: as cinco classes em folha
+inteira sobre fundo branco), sem as 220 folhas do BRACOL parecidas demais com o dataset
+do café. A resposta do `coffee-foliar` passa a ser **só a cabeça**: misturada com a CNN,
+o acerto externo caía para 21%, porque a CNN continua achando que folha inteira é phoma.
+
+| Medido pela API | Só a CNN | Com a cabeça |
+| --- | ---: | ---: |
+| teste isolado (494) | 0,939 (0,950 com TTA) | **0,964** |
+| teste do BRACOL (163, nunca treinado) | 0,313 | **0,914** |
+| **fotos externas** (542, Carneiro et al. 2021, só medida) | **6,5%** | **80,1%** |
+| — bicho-mineiro / ferrugem | 0% / 12% | 77,4% / 82,5% |
+
+As fotos externas são de outra fazenda e de outros autores (nenhum par com o BRACOL
+acima de 0,98 de cosseno; a mais parecida difere 26 níveis de cinza em média) e não
+escolheram nada: a cabeça saiu pela validação (café + BRACOL), com a regra fixada antes.
+Na comparação, a sonda linear teria dado 90% no externo, mas perdia na validação e nos
+dois testes isolados; trocar olhando o externo o transformaria em ajuste.
+
+```bash
+python -m training.import_bracol --zip ~/valtexa-raw/bracol/yy2k5y8mxg-v1.zip \
+    --output data/coffee-bracol
+python -m training.fit_heads --model coffee-foliar --extra data/coffee-bracol \
+    --mix cnn=0,head=1 --holdout data/coffee-bracol-holdout
+python -m training.fit_conformal --model coffee-foliar --field data/coffee-bracol-holdout
+```
+
+**O conjunto conformal precisou de campo.** Calibrado só na validação do café, ele
+cobria 89% no teste isolado, mas só 72% no BRACOL e 48% nas fotos externas — a garantia
+não valia no estilo "folha inteira em fundo branco". Alargado com as folhas do BRACOL que
+a cabeça não treinou (metade calibra, metade mede, como no campo da banana e do citros),
+passou a cobrir 94% no isolado, **92% no BRACOL e 71% nas fotos externas**. As externas
+continuam abaixo dos 90% prometidos: outra fazenda, outro celular, e a garantia só vale
+para o que se parece com a calibração.
+
+O que a cabeça não muda: a novidade continua no embedding da CNN, o mapa de oclusão
+explica a CNN, e o TTA deixa de mexer na resposta (a CNN entra com peso zero).
+
 ### Por que este é o modelo estratégico
 
 Cruzando com a leitura de mercado: café puxa turismo/renda para boa parte do Sul
@@ -432,6 +493,28 @@ treinado em dataset público" em vantagem real e defensável.
 
 ### Limitações
 
+- **Foto de outra fonte: de 6,5% para 80% com a [segunda leitura](#segunda-leitura-do-cafe)
+  (01/10/2026).** O que segue abaixo é a medição da CNN sozinha, que motivou a correção.
+  Continua sem medida a folha **na planta** (o rover): as fotos externas e o BRACOL são
+  folha destacada sobre fundo branco, e o único campo do teste isolado é o RoCoLe.
+  Medido em 30/09/2026 em 542 fotos de
+  folha inteira, nítida, sobre fundo claro (`alvarole/coffee-leaves-disease`,
+  bicho-mineiro e ferrugem; nenhuma parecida com o treino pela mesma checagem do
+  `dedupe_dataset`): **6,5% de acerto**, contra 95% no teste isolado. O bicho-mineiro
+  vira phoma (181 de 257 fotos) e a ferrugem, cercospora ou phoma. O teste isolado
+  mistura duas fontes (as 754 folhas sadias são fotos de campo de 1920×1080; as
+  outras três doenças são lesões em 128×128) e o modelo aprendeu o jeito de
+  fotografar de cada uma, não a doença: em campo, a ferrugem acerta 76% (65 de 86) e
+  em laboratório 99% (155 de 157). Dos 507 erros, 85% disparam alguma salvaguarda;
+  os outros 74 saem sem nenhum alarme. Esse conjunto externo é "copyright-authors"
+  (serve para medir, não para treinar), e o "Ethiopian Coffee Leaf Disease" é 96% cópia
+  do JMuBEN (1.153 de 1.200 fotos), então não vale nem como teste. O dado licenciado
+  que faltava era o BRACOL (CC BY 4.0), já baixado e mal catalogado como "só detecção":
+  a pasta `leaf` dele tem rótulo por folha, e é com ele que a segunda leitura corrige.
+  Um experimento sem retreino ajuda pouco: recortar a caixa da folha numa grade 4×4 e
+  agregar os recortes (média dos logs) sobe o acerto externo de 6,7% para 37,4% (a
+  grade foi escolhida numa metade das fotos e medida na outra), mas só a ferrugem
+  melhora (de ~12% para 71%); o bicho-mineiro segue em **0%**. Não virou recurso.
 - As mesmas do `leaf-foliar`: exige folha preenchendo o quadro, softmax de
   classe única, sem categoria "outro".
 - `Leaf_Miner_Damage` mistura semanticamente doença e dano de inseto na mesma
@@ -440,6 +523,24 @@ treinado em dataset público" em vantagem real e defensável.
   catálogo) compensar mais à frente.
 - Nenhum dos três datasets públicos foi capturado no Brasil. Trate a
   `val_accuracy` deles como piso, não como meta.
+- **O modelo aprendeu com fotos ruins.** Medido em 26/09/2026 pelo
+  `fit_quality`, sobre as 3.462 imagens deduplicadas: na entrada do modelo, o
+  dataset de treino já é tão pouco nítido e tão mal exposto (o JMuBEN é 128×128,
+  ampliado para 224) que um desfoque de 2 px aplicado de propósito só sai do que
+  ele conhece em 18% das fotos — no milho, em 98% —, e um escurecimento a 30% da
+  luz, em 19%. A verificação de qualidade não protege este modelo contra foto
+  tremida ou escura, porque para ele isso é normal. Só a coleta própria, em
+  resolução real, muda isso. Ver [qualidade da captura](README.md#qualidade-da-captura).
+- **Sem textura, ele responde `Rust`.** Medido em 26/09/2026 pelo
+  `audit_attention`: trocada a foto pela cor média dela, o modelo mantém `Rust`
+  com confiança ≥ 0,9 em 92% das folhas com ferrugem — e uma varredura de 936
+  cores chapadas deu `Rust` confiante nas 936. É o mesmo tipo de atalho que pôs o
+  `rover-understory` em quarentena, e explica o caso do drone (cafezal visto de
+  cima vira `Rust` em 94% dos quadros). A causa está nos dados: **150 das 1.540
+  imagens de `Rust` são máscaras de segmentação do PlantSeg**, fundo preto com
+  polígonos cinza. A correção é reimportar sem as máscaras e retreinar; o
+  candidato sem máscaras não chegou a ser treinado (prioridade mudou para citros e
+  banana em 27/09/2026).
 
 ---
 
@@ -632,7 +733,546 @@ precisão/recall, não pelo padrão de 0,5.
 
 ---
 
+<a id="teste-de-campo-rover"></a>
+## O teste de campo na escala do rover
+
+Vale para os dois modelos abaixo, e é o número a citar deles.
+
+O teste isolado sai **das mesmas fontes do treino** — mesma câmera, mesmo fundo,
+mesma luz — e por isso mede pouco. O primeiro `banana-foliar` marcou **0,9846**
+nele; nas fotos de campo do PlantSeg, que nenhum treino viu, **0,4281**. Metade
+das folhas com Sigatoka saiu como Fusariose, e a Cordana quase nunca foi
+reconhecida (2 de 55).
+
+Olhando os erros, o problema não era só o modelo: as fotos do PlantSeg são
+bananal inteiro, planta murcha de corpo inteiro, uma mão segurando a folha — e o
+rover **nunca classifica a planta inteira**. Ele fatia o quadro em recortes de
+150 mm (ver [README](README.md#rover-do-quadro-à-zona-da-planta)), cada um um
+pedaço de limbo. Medir o modelo em foto de bananal é medir outra tarefa.
+
+O [`lesion_tiles`](training/lesion_tiles.py) resolve isso com as **máscaras de
+lesão** que o PlantSeg traz: cada foto vira uma grade de recortes quadrados, em
+duas escalas, e fica só o recorte com lesão de verdade dentro (≥ 5% da área) —
+o que o rover veria se passasse por aquela planta. Os recortes respeitam o split
+oficial do PlantSeg, então nenhuma lesão aparece no treino e no teste:
+
+```bash
+python -m training.lesion_tiles --source ~/valtexa-raw/plantseg/plantseg \
+    --output ~/valtexa-raw/_plantseg-recortes
+python -m training.evaluate --model banana-foliar --tta \
+    --external ~/valtexa-raw/_plantseg-recortes/test/banana
+```
+
+| Cultura | Classe | Treino (fotos → recortes) | Teste (fotos → recortes) |
+| --- | --- | ---: | ---: |
+| banana | Sigatoka | 131 → 777 | 32 → 191 |
+| banana | Fusarium_Wilt | 42 → 233 | 12 → 70 |
+| banana | Cordana | 41 → 238 | 8 → 48 |
+| citros | Canker | 284 → 1.489 | 72 → 390 |
+| citros | Greening | 97 → 537 | 23 → 121 |
+
+**O tamanho real da amostra é o número de fotos**, não o de recortes: recortes
+da mesma foto são a mesma lesão vista de novo. Oito fotos de Cordana no teste
+não sustentam casa decimal — os números abaixo trazem as duas contagens.
+
+Conferido antes de medir: nenhuma foto do PlantSeg de banana ou citros está nos
+dados de treino (dHash + miniatura, mesma regra do `dedupe_dataset`).
+
+Nem todo recorte com lesão é folha. Na Fusariose, parte é o **corte
+transversal** do pseudocaule (o sintoma interno, que o rover não vê); no cancro,
+metade é **fruto**. Em produção quem separa isso é o [portão de
+enquadramento](README.md#enquadramento) — por isso o teste é relatado duas
+vezes: com todos os recortes, e só com os que passam o portão, que é o caminho
+real de um recorte no rover.
+
+---
+
+<a id="banana-foliar"></a>
+## 5. `banana-foliar` — folhas baixas da bananeira
+
+> **A zona de folhas baixas do rover na bananeira.** As folhas velhas, de baixo,
+> são onde a Sigatoka é mais severa e onde o mal-do-Panamá amarela primeiro.
+
+### O que responde
+
+"Este pedaço de folha de bananeira, ocupando o recorte, está sadio? Se não, é
+Sigatoka, Fusariose (mal-do-Panamá), Cordana ou Pestalotiopsis?"
+
+### Ficha técnica
+
+| Item | Valor |
+| --- | --- |
+| Chave na API | `banana-foliar` |
+| Plataforma | `any` — no rover, pela rota `/predict/rover-frame` |
+| Entrada | 224×224 RGB, `[-1, 1]` |
+| Arquitetura | MobileNetV2 + cabeça de 5 saídas (a do catálogo) |
+| Pesos | `models/banana_foliar.keras` |
+
+### Classes
+
+| Classe | Patologia | Sinal visual |
+| --- | --- | --- |
+| `Healthy` | — | Limbo verde, sem lesão |
+| `Sigatoka` | Sigatoka-negra e amarela / *Pseudocercospora fijiensis*, *P. musae* | Estrias que escurecem e coalescem em áreas necróticas |
+| `Fusarium_Wilt` | Mal-do-Panamá / *Fusarium oxysporum* f. sp. *cubense* | Amarelecimento a partir da margem das folhas velhas |
+| `Cordana` | Mancha de Cordana / *Neocordana musae* | Lesões ovais grandes, centro pardo e halo amarelo |
+| `Pestalotiopsis` | *Pestalotiopsis* spp. | Manchas irregulares pardas na margem |
+
+Sigatoka-negra e amarela ficam juntas: nos datasets públicos os rótulos não as
+separam com segurança.
+
+### Datasets
+
+| Dataset | Origem | Licença | Uso |
+| --- | --- | --- | --- |
+| Banana leaf and stem (Tanzânia) | Harvard Dataverse `doi:10.7910/DVN/LQUWXW` | CC BY 4.0 | Sigatoka, Fusariose, sadia — em campo |
+| BananaLSD | Kaggle `shifatearman/bananalsd` (Bangladesh) | CC BY 4.0 | Cordana, Pestalotiopsis, Sigatoka, sadia |
+| Banana Disease Recognition | Kaggle `sujaykapadnis/banana-disease-recognition-dataset` | CC BY 4.0 | Sigatoka, Fusariose, sadia |
+| PlantSeg (banana) | Zenodo, split oficial | CC BY-NC 4.0 | recortes do treino **entram no treino**; recortes do teste = teste de campo |
+
+As fotos de "caule" do dataset da Tanzânia são o corte transversal interno e não
+entram. Deduplicado com o `dedupe_dataset` (versão com confirmação por miniatura,
+ver [citros](#citrus-foliar)): **17.191 imagens**. A versão anterior, só com
+dHash, descartava 1.508 fotos como "a mesma imagem em classes diferentes"; com a
+confirmação sobra um único conflito real (2 arquivos).
+
+### Como treinar
+
+```bash
+python -m training.prepare_dataset --model banana-foliar \
+    --source ~/valtexa-raw/banana-tz \
+    --source ~/valtexa-raw/bananalsd/BananaLSD/OriginalSet \
+    --source "~/valtexa-raw/banana-recognition/Banana Disease Recognition Dataset/Original Images/Original Images"
+python -m training.dedupe_dataset --model banana-foliar
+# recortes de campo na escala do rover (split oficial do PlantSeg)
+python -m training.lesion_tiles --source ~/valtexa-raw/plantseg/plantseg \
+    --output ~/valtexa-raw/_plantseg-recortes
+# data/banana-foliar-campo = data/banana-foliar + _plantseg-recortes/train/banana
+python -m training.train --model banana-foliar --tta --test-split 0.15 \
+    --data-dir data/banana-foliar-campo
+python -m training.evaluate --model banana-foliar --tta \
+    --external ~/valtexa-raw/_plantseg-recortes/test/banana
+python -m training.fit_prior --model banana-foliar --data-dir data/banana-foliar-campo
+```
+
+### Resultado medido — 27/09/2026
+
+| | Teste isolado | Campo — recortes | Campo — fotos (voto) |
+| --- | ---: | ---: | ---: |
+| 1º treino, sem recortes de campo (hoje `banana-foliar-cc`) | 0,985 | 0,592 | 0,692 (36/52) |
+| **`banana-foliar`**, com os recortes do PlantSeg-treino | 0,977 | **0,829** | **0,846 (44/52)** |
+
+Por classe, no campo (recortes): Fusariose 0,929, Sigatoka 0,848, Cordana
+0,625 (era 0,083). O erro que sobra é Cordana ↔ Sigatoka nos dois sentidos (16 e
+19 recortes). No teste isolado — que agora inclui recortes do PlantSeg — a pior
+classe é Cordana (recall 0,922, n = 51).
+
+Salvaguardas calibradas: novidade, conformal, qualidade e prevalência de treino.
+Auditoria de atenção: **nenhuma classe responde pela cor** (0% com o quadro
+chapado); Pestalotiopsis, porém, tem 80% das imagens "sem região" — cobrir o
+trecho mais decisivo quase não muda a confiança, sinal de que o modelo lê a foto
+inteira nessa classe. ONNX: 9,7 MB, mesma classe que o Keras em 100% de 256
+imagens reais (diferença máxima 2,9e-6), 8,9 ms por imagem em CPU.
+
+### Limitações
+
+- **Pseudocaule não é lido.** Não há dataset público com o sintoma externo do
+  pseudocaule na escala do rover. O portão manda esses recortes para
+  `out_of_scope`, e a fila de revisão do rover é o que vai formar esse dataset.
+- **Cordana e Pestalotiopsis vêm de uma fonte só** (BananaLSD, Bangladesh), com
+  ~160 fotos cada. Os recortes do PlantSeg somaram 238 de Cordana (41 fotos) e levaram o recall de campo de 8% a 62,5% — mas são 8 fotos de teste, e Cordana e Sigatoka continuam se confundindo. Pestalotiopsis não tem teste de campo.
+- **A versão comercial (`banana-foliar-cc`) tem um atalho de cor.** Na auditoria
+  de atenção, um quadro chapado da cor média da foto sai `Healthy` com confiança
+  ≥ 0,9 em 100% das folhas sadias, e Pestalotiopsis não depende de região
+  nenhuma (cobrir o trecho decisivo não muda nada). Qualquer superfície verde
+  uniforme vira "sadia" com certeza. A versão de campo não tem o defeito (0%) —
+  os recortes do PlantSeg também corrigiram isso.
+- Moko (*Ralstonia*), presente no Brasil, e *bunchy top* não estão no catálogo:
+  caem numa das cinco classes, e só a novidade e o conjunto conformal avisam.
+- Nenhum dos datasets é brasileiro.
+
+---
+
+<a id="citrus-foliar"></a>
+## 6. `citrus-foliar` — folhas de citros (laranja e limão)
+
+> **A copa baixa do citros no rover.** Laranja e limão juntos: as doenças
+> foliares que os datasets públicos cobrem são as mesmas nos dois.
+
+### O que responde
+
+"Esta folha de citros, ocupando o recorte, está sadia? Se não, qual das onze
+doenças e pragas?"
+
+### Ficha técnica
+
+| Item | Valor |
+| --- | --- |
+| Chave na API | `citrus-foliar` |
+| Plataforma | `any` — no rover, pela rota `/predict/rover-frame` |
+| Entrada | 224×224 RGB, `[-1, 1]` |
+| Arquitetura | MobileNetV2 + cabeça de 12 saídas |
+| Pesos | `models/citrus_foliar.keras` |
+
+### Classes
+
+`Algal_Leaf_Spot` (mancha de alga, *Cephaleuros*), `Anthracnose`
+(antracnose), `Black_Spot` (pinta-preta, *Phyllosticta citricarpa*), `Canker`
+(cancro cítrico, *Xanthomonas citri*), `Curl_Leaf` (enrolamento), `Greening`
+(HLB, *Candidatus* Liberibacter), `Healthy`, `Leafminer` (larva-minadora,
+*Phyllocnistis citrella*), `Melanose` (melanose, *Diaporthe citri*), `Mites`
+(ácaros), `Scab` (verrugose, *Elsinoë fawcettii*), `Sooty_Mold` (fumagina).
+
+### Datasets
+
+| Dataset | Origem | Licença |
+| --- | --- | --- |
+| Large-Scale Lemon Leaf Disease and Pest | Mendeley `8d9fv6kpt3` v1 (Bangladesh) | CC BY 4.0 |
+| BDLemonLeaf — só `Raw Image` | Mendeley `643f5bbc2t` v6 | CC BY 4.0 |
+| Sweet orange leaf — só `Original Image` | Mendeley `f7cr74mwpj` v1 | CC BY 4.0 |
+| PlantSeg (citros) | Zenodo, split oficial | CC BY-NC 4.0 |
+
+Do BDLemonLeaf fica de fora a pasta `Annotated Image` (tem as caixas
+desenhadas na foto); do de laranja, a `Converted Image` (a mesma foto de novo).
+O `citrus-jsilva` do Kaggle é só fruto e não entra.
+
+### Dois problemas dos dados, e o que foi feito
+
+**A folha está sobre papel.** Os três datasets fotografam a folha destacada,
+sobre papel liso; o rover a vê na árvore. A primeira tentativa foi a **troca de
+fundo** ([`background`](training/background.py)): separar a folha do papel (cor
+da borda + Otsu; a folha foi separada em 92% das fotos reais) e colá-la, a cada
+época, sobre recortes de pomar filmado do chão (184 quadros de vídeos públicos
+do YouTube). **Medida, ela piorou o modelo** — ver a tabela abaixo — e ficou de
+fora. O que resolveu foram os recortes de campo do PlantSeg. O código continua
+disponível (`--backgrounds`), com a máscara da folha calculada uma vez e guardada
+no cache do `tf.data` (o passo de treino caiu de 394 para 77 ms).
+
+**O dHash sozinho apagava folhas diferentes.** Toda folha destacada sobre papel
+tem o mesmo gradiente — claro, escuro, claro. Com a distância 4, a união
+transitiva juntou as 12 classes num grupo só e ia apagar 68% do dataset. O
+`dedupe_dataset` agora só une um par que o dHash indicou se a **miniatura
+colorida da folha** (a caixa do que não é papel, sem o papel) também bater.
+Medido em 6.000 pares indicados: entre classes, **nenhum** fica até 10 (mediana
+39); dentro da classe há um vão limpo entre a mesma folha fotografada em
+sequência (9%) e folhas diferentes. Resultado: de 18.839 imagens, **11.764**
+distintas — os datasets fotografam a mesma folha até 14 vezes seguidas — e 30
+conflitos reais de rótulo (65 arquivos, a maioria `Algal_Leaf_Spot` e
+`Black_Spot` com a mesma foto).
+
+| Classe | Imagens | Classe | Imagens |
+| --- | ---: | --- | ---: |
+| Greening | 2.170 | Leafminer | 775 |
+| Healthy | 1.724 | Anthracnose | 765 |
+| Canker | 1.684 | Mites | 669 |
+| Sooty_Mold | 1.589 | Black_Spot | 380 |
+| Curl_Leaf | 1.356 | Algal_Leaf_Spot | 322 |
+| | | Melanose | 188 |
+| | | Scab | 142 |
+
+### Como treinar
+
+```bash
+python -m training.prepare_dataset --model citrus-foliar \
+    --source ~/valtexa-raw/lemon-large/8d9fv6kpt3-v1 \
+    --source ".../BDLemonLeaf.../Root/Raw Image" \
+    --source ".../Sweetorange/Original Image"
+python -m training.dedupe_dataset --model citrus-foliar
+python -m training.lesion_tiles --source ~/valtexa-raw/plantseg/plantseg \
+    --output ~/valtexa-raw/_plantseg-recortes
+# data/citrus-foliar-campo = data/citrus-foliar + _plantseg-recortes/train/citrus
+python -m training.train --model citrus-foliar --tta --test-split 0.15 \
+    --data-dir data/citrus-foliar-campo
+python -m training.evaluate --model citrus-foliar --tta \
+    --external ~/valtexa-raw/_plantseg-recortes/test/citrus
+python -m training.fit_prior --model citrus-foliar --data-dir data/citrus-foliar-campo
+```
+
+### Resultado medido — 27/09/2026
+
+Quatro treinos, para separar o efeito de cada decisão — o teste de campo só
+tem cancro e greening (95 fotos):
+
+| Treino | Teste isolado | Campo — recortes | Campo — fotos (voto) |
+| --- | ---: | ---: | ---: |
+| só papel (hoje `citrus-foliar-cc`) | 0,874 | 0,695 | 0,726 (69/95) |
+| papel + troca de fundo | 0,847 | 0,382 | 0,421 (40/95) |
+| papel + troca de fundo + recortes de campo | 0,848 | 0,959 | 0,979 (93/95) |
+| **`citrus-foliar`**: papel + recortes de campo | **0,884** | **0,969** | — |
+
+No campo, o instalado acerta 96,4% do cancro e 98,3% do greening. No teste
+isolado, as piores classes são Leafminer e Melanose.
+
+Salvaguardas calibradas: novidade, conformal, qualidade e prevalência de treino.
+Auditoria de atenção: nenhuma das 12 classes responde pela cor (0%). Cancro (16%
+"sem região") e verrugose (0%) são lidos pela lesão; fumagina (68%) e ácaros
+(84%) pela folha inteira, como o sintoma; **Melanose (92%) é suspeita** — classe
+pequena, pode estar reconhecendo a fonte. ONNX: mesma classe que o Keras em 100%
+de 256 imagens (diferença máxima 4,6e-6), 10,7 ms por imagem em CPU.
+
+### Orientação da folha — medido em 01/10/2026
+
+O citros acerta 88,8% com a folha em pé e **82,3% de cabeça para baixo** (espelho
+vertical ou giro de 180°, 1.200 imagens do teste isolado); a banana, o milho e o café
+variam menos de 1,2 ponto. A causa estava certa: o treino só espelha na horizontal.
+Retreinado com o espelho nos dois eixos, a diferença some (87,3 a 87,7%), **mas sem
+ganho líquido**: com TTA o acerto é o mesmo (88,67%), o isolado sem TTA perde 1,8 ponto,
+o campo com TTA fica em 0,967 contra 0,969 (93 contra 95 das 95 fotos), e o comercial
+ficou **pior** no campo (0,634 contra 0,693; 66 contra 70 das 95 fotos). Como original,
+espelho horizontal, espelho vertical e giro de 180° formam um grupo fechado, **com TTA a
+resposta já é idêntica para a foto em pé e de cabeça para baixo**: com `?tta=true` o
+problema some por construção para flips e giro de 180°, sem retreinar. No rover, porém,
+o TTA vem **desligado** (`ROVER_TTA=false`), porque melhora o recorte mas piora a
+detecção por planta (29 para 24 de 33 plantas de citros no talhão de ponta a ponta;
+ver o README), então a sensibilidade à orientação continua valendo ali até a fusão ser
+recalibrada para saídas com TTA. Os pesos instalados ficaram os de 27/09/2026. Ficam de
+fora os giros de 90° (foto de celular em retrato, que a API não corrige pelo EXIF) e os
+arbitrários, que o TTA não cobre.
+
+**Resolvido sem TTA, pela segunda leitura (01/10/2026).** Uma rede pequena sobre o
+embedding SigLIP que o portão já calcula para toda foto, com a arquitetura buscada pelo
+dNATY e treinada com as quatro orientações (ver [segunda leitura](README.md#segunda-leitura-cabeças-sobre-o-embedding-do-portão)),
+lê a folha do mesmo jeito nas quatro. Misturada à CNN (média geométrica, 0,25 CNN + 0,75
+cabeça, peso escolhido na validação com as quatro orientações), **sem TTA** — que é como o
+rover roda —, no teste isolado inteiro:
+
+| | Em pé | Espelho H | Espelho V | Giro 180° | Campo, 511 recortes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `citrus-foliar`, só a CNN | 0,884 | 0,880 | 0,819 | 0,821 | 0,951 |
+| `citrus-foliar` + cabeça | **0,931** | **0,936** | **0,937** | **0,933** | **1,000** |
+| `citrus-foliar-cc`, só a CNN | 0,870 | 0,867 | 0,806 | 0,819 | 0,665 |
+| `citrus-foliar-cc` + cabeça | **0,918** | **0,922** | **0,926** | **0,921** | **0,795** |
+
+Com TTA, a API dá 0,931 no isolado e 0,996 no campo (`citrus-foliar`; antes 0,879 e
+0,969) e 0,919 / 0,798 no comercial (antes 0,871 / 0,693). A cabeça do comercial só viu
+dado CC BY (folhas sobre papel); a do `citrus-foliar` viu também os recortes de treino do
+PlantSeg, como a CNN dele. O teste de campo continua com só duas classes (cancro e
+greening). A detecção por planta no talhão de ponta a ponta está na
+[segunda leitura](README.md#segunda-leitura-cabeças-sobre-o-embedding-do-portão).
+
+### Limitações
+
+- **O teste de campo só tem duas das doze classes** (cancro e greening, as que o
+  PlantSeg traz). As outras dez só foram medidas sobre papel.
+- **Nenhum dataset é brasileiro**, e as doenças que mais importam no citros
+  paulista — CVC, leprose, gomose, pinta-preta em fruto — ou não estão no
+  catálogo ou só aparecem em folha. Caem na fila de revisão, se a novidade ou o
+  conjunto conformal perceberem.
+- Scab (142) e Melanose (188) são classes finas.
+- **Melanose e Leafminer** são as classes mais fracas, e a auditoria sugere que a
+  Melanose é lida pela foto, não pela lesão.
+- Os recortes de campo são do PlantSeg (CC BY-NC 4.0). A versão para uso
+  comercial é o `citrus-foliar-cc`, que erra muito mais no campo — a saída é a
+  coleta própria do rover. Ela não tem atalho de cor (0% com o quadro chapado,
+  apesar do papel), mas lê Mancha de Alga (84% "sem região") e Pinta-Preta (88%)
+  pela folha inteira.
+
+---
+
+<a id="fusao-por-planta"></a>
+## Fusão por planta e incidência do talhão — calibradas em 02/10/2026
+
+O rover não diagnostica foto: soma a evidência dos recortes de uma planta, de várias
+câmeras, e diz `sadia`, `suspeita` ou `doente` ([`plant_fusion`](app/plant_fusion.py)).
+O artefato é `models/<pesos>.fusion.json`, gravado pelo
+[`fit_fusion`](training/fit_fusion.py): a razão de verossimilhança de um recorte por
+faixa de probabilidade de cada doença, os limiares dos status pelo alarme falso em
+plantas sadias (5% para `suspeita` ou `doente`, 2% para `doente`) com piso no que o
+status quer dizer (`suspeita` só com razão de verossimilhança calibrada ≥ 1, `doente`
+só com posterior ≥ 50% no prior de 5%), a escala de Platt da posterior e a
+sensibilidade e o alarme falso por planta. Vale para os pesos com que
+foi medido e para recortes sem TTA: pesos novos pedem `fit_fusion` de novo, como o
+`fit_conformal`.
+
+### Resultado medido — validação cruzada aninhada em 10 partes
+
+Planta = três fotos, uma por altura de câmera do mastro, pelo caminho do
+`/predict/rover-frame`. Tudo fora da amostra.
+
+| | Doentes detectadas | Doença certa | Sadias com alarme | Sadias como `doente` |
+| --- | ---: | ---: | ---: | ---: |
+| `banana-foliar`, sem calibração | 66/125 (53%) | 20 | 13/283 (4,6%) | 0 |
+| **`banana-foliar`, calibrada** | **115/125 (92%)** | 61 | 15/283 (5,3%) | 0 |
+| `citrus-foliar`, sem calibração | 27/33 | 27 | 3/83 (3,6%) | 0 |
+| **`citrus-foliar`, calibrada** | **33/33** | 32 | 2/83 (2,4%) | 0 |
+
+**O piso dos limiares.** A primeira versão instalada (02/10/2026, de manhã) só tinha a
+meta de alarme falso. Nos citros, as sadias de papel têm evidência muito negativa, e a
+meta de 5% pôs o limiar de `suspeita` em −4,6 na escala calibrada: aceitava planta com
+evidência **contra** a doença. Na demonstração do SaaS, as três laranjeiras sadias
+saíram `suspeita` com posterior de 0,1% a 1,7%. Com o piso, os citros passaram de 5/83
+para 2/83 sadias com alarme sem perder nenhuma doente, e na banana nenhuma sadia sai
+mais como `doente` (eram 8); as doentes como `doente` caíram de 95 para 30 — as outras
+85 continuam sinalizadas, como `suspeita`. A `FusionCalibration` agora recusa limiar de
+`suspeita` negativo.
+
+| Banana, por doença | Calibrada | Fonte | Calibrada |
+| --- | ---: | --- | ---: |
+| Cordana | 18/20 | doentes do acervo (campo) | 98/107 |
+| Fusariose | 41/44 | doentes do PlantSeg | 17/18 |
+| Pestalotiopsis | 10/10 | sadias do acervo | 15/283 |
+| Sigatoka | 46/51 | | |
+
+Pela API, no talhão de ponta a ponta (as mesmas fotos montadas em outras plantas): banana
+17/18 doentes e 3/18 sadias como `suspeita` (antes 9/18 e 1/18); citros 33/33 e 0/33
+(antes 27/33 e 0/33); nenhuma sadia como `doente`. Em 2.000 trios sadios sorteados das
+mesmas fotos, o alarme é 5,9% na banana (0,3% como `doente`) e 0,2% nos citros. Na
+demonstração do SaaS (`simulator.pomar` com a IA de verdade), a situação da planta saiu
+certa em 18 de 18 no bananal e 15 de 15 no pomar.
+
+Parâmetros escolhidos: banana `tile_correlation` 1,0, corte da LLR 1,0, Platt
+−0,10 + 2,65 L; citros 1,0, 2,0 e −0,93 + 6,43 L. Com correlação 1,0, os recortes de
+um quadro valem uma vista só (a média deles): tratá-los como mais independentes não
+melhorou a detecção em nenhuma das calibrações.
+
+**Por que a razão de verossimilhança é um histograma.** A primeira tentativa estimou
+sensibilidade e alarme falso por recorte pela média das probabilidades. Na banana
+funcionou (9 → 14 de 18 doentes do PlantSeg), mas nos citros piorou o Greening de 7
+para 4 de 8: o modelo põe, em média, 48% de probabilidade de Greening em recorte de
+planta sem Greening, e pela média a evidência dele quase some. Só a cauda perto de 1
+separa as plantas, e o histograma por faixa vê a cauda.
+
+**Por que as doentes de papel ficaram fora dos citros.** O acervo do citros é de folha
+destacada sobre papel; com as 315 plantas doentes dele na calibração, a detecção nas
+fotos de campo do PlantSeg caiu de 33 para 25 de 33. A calibração sem elas, medida sem
+reajuste nessas 315, ainda acha Canker em 33/40 e Greening em 29/40 — reage à doença, e
+não à diferença entre papel e campo. As outras nove doenças do citros acham pouco no
+papel (Leafminer 0/40, Mites 0/33, Curl Leaf 1/40) e herdam a tabela combinada.
+
+### Incidência do talhão
+
+`GET /fields/{talhão}/incidence`: a fração de **plantas** doentes, corrigida por
+Rogan-Gladen com as taxas acima, com intervalo de 95% (Beta de Jeffreys nas três
+proporções, com o tamanho efetivo das taxas). Medido em 8 divisões aleatórias em
+metades: calibra numa, simula talhões com plantas da outra.
+
+| Talhão de 1.000 plantas | 0% | 5% | 10% | 20% | 50% |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| banana, erro médio (pontos) | 1,4 | 3,1 | 2,9 | 2,6 | 2,7 |
+| banana, cobertura do IC95 | 95% | 83% | 85% | 94% | 97% |
+| citros, erro médio (pontos) | 0,0 | 1,3 | 1,2 | 1,1 | 0,7 |
+| citros, cobertura do IC95 | 100% | 100% | 100% | 100% | 100% |
+
+Com 100 plantas, a cobertura da banana sobe para 96–100% (a contagem do talhão pesa
+mais no intervalo). A fração aparente, sem correção, erra 3 a 6 pontos na banana. Os
+citros saem quase perfeitos porque as sadias de papel quase nunca dão alarme (2/83) —
+num pomar de verdade isso não está medido. A estimativa antiga, a EM sobre os **recortes**,
+dava 60% de doença num talhão de bananeiras todas sadias e quase 100% num de citros:
+ela mede a proporção de recortes, não de plantas.
+
+### Limitações
+
+- **Fotos agrupadas não são o rover.** As plantas da calibração são três fotos de
+  folha; no pomar, o recorte vê folhas, galhos e fundo da mesma árvore. A validação de
+  campo (README, [calibração da fusão](README.md#calibração-da-fusão)) mede isto com o
+  registro do rover e o rótulo do agrônomo por fileira.
+- **O alarme falso dos citros numa árvore de verdade não foi medido.** As 83 sadias são
+  folhas sobre papel. Antes do piso nos limiares, com 83 sadias o próprio limiar era
+  ruidoso (o alarme real variou de 0 a 17% entre metades sorteadas); com o piso, ficou
+  entre 0 e 2,4% — no papel. A taxa que vale é a que a validação de campo medir.
+- **Acertar a doença é o ponto fraco da banana**: 61 das 115 plantas detectadas saem
+  com a doença certa. Sigatoka, Cordana e Fusariose se confundem por planta; a
+  prescrição por doença herda esse erro.
+- O PlantSeg é CC BY-NC 4.0, como nos modelos.
+
+---
+
 <a id="severidade"></a>
+## Edge AI do Rover — limiares medidos em 07/10/2026
+
+### Café no Rover — 07/10/2026
+
+O café é a cultura do produto, e é a que mais muda no Rover:
+
+* **Caminho com cabeça.** No café a CNN sozinha acerta 6,5% num acervo externo; quem
+  diagnostica é a cabeça (`coffee_foliar.head.npz`) sobre o embedding da torre de visão do
+  SigLIP 2. O Rover passou a rodar a torre em ONNX (`framing_vision.onnx`, 355 MB, levada
+  como `<sha>.encoder.onnx` e conferida pelo SHA-256 do perfil) e a cabeça copiada byte a
+  byte do `ia/` (`app/inference/heads.py`). Paridade Rover × IA em 24 folhas do BRACOL
+  separado: diferença máxima 1,6e-5, mesma classe em 100%. Custo: 131 ms por recorte em CPU
+  de PC (~9,8 s por quadro de 70 recortes); **na Jetson, a medir** (a torre vai para a GPU).
+* **Fusão e zonas.** Café na fusão por planta (pé a 0,7 m, ruas de 3,5 m; o espaçamento do
+  cadastro do talhão substitui o padrão) e os terços do cafeeiro como zonas.
+* **Calibração por mosaico.** As fotos de café são folha em close: cortadas como 1 m de
+  planta, cada recorte virava um pedaço ampliado de folha, e o Rover pegava 90 de 203
+  plantas doentes (ferrugem 13 de 90 na fusão). A 270 mm o recorte de 150 mm mostra ~uma
+  folha — o que a foto mostra. `fit_edge mosaico` monta o quadro do Rover com 70 folhas
+  fotografadas (cada uma classificada uma vez pela cabeça), com a fração de folhas doentes
+  da planta (5, 10 e 20%); as fotos são repartidas em 5 grupos sem repetição, e cada parte
+  da validação cruzada é um grupo (fonte `dobra:N`).
+
+Fora da amostra, com fotos que o ajuste não viu (teste do `coffee-foliar` + BRACOL separado,
+883 fotos; acerto da cabeça por folha: ferrugem 95,3%, phoma 96,8%, bicho-mineiro 94,6%,
+sadia 95,7%, cercosporiose 83,3%):
+
+| | Folhas doentes 5% | 10% | 20% | Quadros sadios evento |
+| --- | ---: | ---: | ---: | ---: |
+| Rover, regra por evidência (orçamento de 5% **em cada** grupo de fotos) | 160/240 | 240/240 | 240/240 | 103/900 (11,4%) |
+| Fusão da borda (`coffee_foliar.edge-fusion.json`), plantas | — | — | — | 12/300 sadias com alarme (4%); 631/720 doentes |
+
+Com o orçamento só na média dos grupos, os quadros sadios fora da amostra iam a 20,6%: as
+sadias vêm de 164 fotos, e as poucas folhas que a cabeça erra se repetem em todos os quadros
+do grupo. A regra de anomalia fica **desligada** no café: medida em foto limpa, marcava quase
+todo quadro sadio de cafezal montado como ANOMALIA.
+
+Cadeia completa com a IA no ar (8 pés montados com folhas do BRACOL separado, 25% de folhas
+doentes nos doentes): ferrugem e bicho-mineiro → `doente` com a doença certa (posterior 1,00);
+trechos sadios → 6 `sadia`, 1 `suspeita` (0,28); prescrição de ferrugem: tratar 7 de 11
+trechos, 89% do ganho de pulverizar tudo por 64% do custo. Mas 8 dos 15 quadros sadios
+desse cafezal montado viraram evento (sobem em original): o alarme falso por quadro do café
+**não é conhecido** — entre 11% e 50% nas duas montagens — e só a coleta de campo diz.
+
+**Limite.** Nada aqui é o Rover no cafezal. A folha em close não é o recorte de folhagem
+embaraçada, com galho, fruto e sombra. A primeira coleta no Sul de Minas deve rodar com o
+perfil provisório (o custo do alarme falso é só subir mais original — o que a coleta quer),
+o agrônomo rotulando os pés de uma fileira, e recalibrar com `fit_edge fit --labels` e
+`fit_fusion fit --labels` sobre o registro do Rover na IA (`FIELDS_TILE_LOG=true`). O
+mesmo dia vira treino: [`training/import_campo.py`](training/import_campo.py) corta os
+originais exportados pela plataforma (`scripts/exporta_originais.py` do SaaS) nos recortes
+do registro — recortes de pés rotulados sadios entram como `Healthy`; os de pés doentes vão
+para `_revisar` com um manifesto, porque nem todo recorte de um pé doente mostra lesão.
+
+### Banana e citros
+
+No Rover a IA roda sem internet, só o ONNX (sem TTA, sem o portão de enquadramento e
+sem as cabeças, que só existem na nuvem), e decide quadro a quadro o que sobe em
+qualidade original primeiro. O artefato é `models/<pesos>.edge.json` (com o
+`.categories.json`), gravado pelo [`fit_edge`](training/fit_edge.py) e copiado para o
+Rover junto com o modelo (`valtexa-rover preparar-modelo`). Mesmas plantas da fusão
+(três fotos por planta, uma por andar de câmera, recortes de 150 mm a 270 mm),
+validação cruzada em 5 partes por planta, orçamento de 5% de quadros sadios virando
+evento. Tudo fora da amostra.
+
+| | Plantas doentes com ≥ 1 quadro evento | Quadros doentes evento | Quadros sadios evento |
+| --- | ---: | ---: | ---: |
+| banana, contagem de recortes (canto da grade: 3 recortes ≥ 0,99) | 125/125 | 298/373 | **260/779 (33%)** |
+| **banana, evidência** | **99/125 (79%)** | 168/373 | **41/779 (5,3%)** |
+| citros, contagem de recortes (3 recortes ≥ 0,99) | 33/33 | 98/98 | **165/249 (66%)** |
+| **citros, evidência** | **33/33** | 84/98 | **15/249 (6,0%)** |
+
+**Por que evidência e não contagem.** O modelo põe probabilidade de doença ≥ 0,99 em
+pedaço de folha sadia com frequência: nenhum par (limiar, número de recortes) da grade
+cabe no orçamento. A regra por evidência é a da fusão por planta num quadro só: cada
+recorte vira a log-razão de verossimilhança da faixa da sua probabilidade (faixas mais
+finas perto de 1: 0,98, 0,99, 0,995, 0,999), limitada; o escore é a maior, entre as
+doenças, da média nos recortes com o desconto de correlação; evento acima do quantil
+95% dos quadros sadios. Tabelas, corte e limiar são refeitos em cada parte de treino.
+Escolhidos: banana corte 2,0, correlação 1,0, evento > 0,518; citros 2,0, 1,0, > 0,343.
+
+**Fusão dos recortes do Rover** (`<pesos>.edge-fusion.json`, `fit_edge fusao`): a nuvem
+funde por planta as probabilidades que o Rover manda (`POST /fields/{id}/frames`). Fora da
+amostra (10 partes): banana 113/125 doentes com 15/283 sadias em alarme; citros 32/33 com
+4/83 (contra 115/125 e 33/33 da calibração da nuvem, que tem o portão).
+
+Tempo por quadro de 12 MP (70 recortes) em CPU de PC, sem GPU: 2,8 s na banana, 1,9 s
+nos citros — ~1,9 s da rede e ~0,85 s do pré-processamento idêntico ao do treino. Na
+Jetson a rede vai para a GPU (TensorRT); o pré-processamento no ARM tende a ser o gargalo.
+**Não medido na Jetson.**
+
+Limites: fotos de folha agrupadas, não o Rover no pomar; nos citros as sadias são folha
+sobre papel e só 83 plantas (o alarme falso real pode variar bem mais que o medido). A
+validação de campo deve remedir com o registro do Rover.
+
 ## Severidade — área lesionada no quadro
 
 ### O que responde
@@ -907,16 +1547,20 @@ metodológica** para montar o seu:
 | `jmuben-coffee` | [JMuBEN/JMuBEN2](https://www.sciencedirect.com/science/article/pii/S2352340921004261) | 58.549 imgs — Healthy 18.961, Miner 17.000, Rust 8.336, Cercospora 7.681, Phoma 6.571 | Fazenda única (Kirinyaga, Quênia), câmera digital | **Base do `coffee-foliar`.** Resolução baixa (128×128) — trate como piso, não meta |
 | `rocole` | [RoCoLe](https://data.mendeley.com/datasets/c5yvn32dzg/2) | 1.560 imgs | **Campo real**, smartphone a 200-300 mm, robusta (não arábica) | Pequeno, mas com variação genuína de luz/fundo/umidade — anotação de severidade |
 | `plantseg-coffee` | Recorte de café do [PlantSeg](https://zenodo.org/records/13762907) | Parte do PlantSeg (34 espécies) | **In-the-wild** | Café listado entre as "culturas de lucro" do PlantSeg — melhor opção de fundo realista |
-| `bracol` | [BRACOL](https://data.mendeley.com/datasets/yy2k5y8mxg/1) — Brazilian Arabica Coffee Leaf | 1.744 imgs, bounding box, 4 classes (Cercospora, Miner, Phoma, Rust) | **Campo, Espírito Santo (BR)** | Confirmado nesta rodada — é o dataset brasileiro de café que faltava. **Formato de detecção (YOLO), não serve ao classificador atual** — ver [zoom e detecção por lesão](#zoom-e-deteccao). Já baixado em `downloads/_bracol-raw/` |
+| `bracol` | [BRACOL](https://data.mendeley.com/datasets/yy2k5y8mxg/1) — Brazilian Arabica Coffee Leaf, **CC BY 4.0** | 1.747 folhas inteiras (1.401 recuperáveis, ver abaixo); rótulo por folha no `leaf/dataset.csv` | Folha destacada sobre **fundo branco**, vários celulares, Espírito Santo (BR) | **Usado pela cabeça do `coffee-foliar` desde 01/10/2026** (`training.import_bracol` -> `data/coffee-bracol`). 73 das folhas de phoma dele já estavam no `coffee-foliar` |
 
 **Sobre café brasileiro**: `bracol` fecha a lacuna que antes ficava em aberto —
 já existe dataset público **do Brasil** (Espírito Santo, mesma faixa de altitude
-e clima montanhoso Arabica que o Sul de Minas). A ressalva que continua valendo:
-é anotação por bounding box, então só entra em produção quando o item de
-detecção por lesão do roadmap sair do papel — para o `coffee-foliar` de
-classificação, os três primeiros datasets continuam sendo a base, e nenhum
-deles é brasileiro. A coleta própria no Sul de Minas continua sendo o que vira
-produto defensável.
+e clima montanhoso Arabica que o Sul de Minas). A pasta `leaf` traz um rótulo por
+folha (estresse predominante: sadia, bicho-mineiro, ferrugem, phoma, cercospora; o
+código 5, sem predominante, fica de fora), e é isso que a cabeça usa. O zip hospedado
+no Mendeley vem **truncado** (medido em 01/10/2026: termina no meio de uma imagem,
+sem diretório central); o `import_bracol --zip` lê as entradas completas pelos
+cabeçalhos locais e recupera 1.401 das 1.747 folhas. A CNN do `coffee-foliar` não
+foi retreinada com ele: quem aprende o BRACOL é a [segunda
+leitura](#segunda-leitura-do-cafe). A coleta própria no Sul de Minas continua sendo o
+que vira produto defensável — o BRACOL é folha destacada sobre fundo branco, não a
+folha na planta que o rover vê.
 
 ---
 
@@ -1107,6 +1751,29 @@ nunca marca nada. Sem `REVIEW_DIR` a API marca `needs_review` na resposta mas n�
 grava nada em disco (o cliente decide o que fazer). Guardar imagem de cliente é
 decisão de quem opera, então o padrão é desligado.
 
+### O incidente: a novidade do `leaf-foliar` ficou desligada de 08/09 a 26/09
+
+Encontrado em 26/09/2026, ao medir o TTA. A referência
+`corn_disease_model.novelty.npz` foi gravada em 08/09 às 22:25 — **depois** dos
+pesos de 4 classes (19:48) — com 3 classes e 17.772 imagens: exatamente o
+dataset sem `Gray_Leaf_Spot` do experimento da doença retida. A calibração do
+experimento gravou por cima da de produção.
+
+A API fez o que devia: recusou uma referência cujas classes não batem com as dos
+pesos. Mas a recusa só aparecia numa linha de log de erro, `/health` respondia
+normalmente, e o modelo principal serviu por semanas sem detecção de novidade —
+`novelty_score` nulo e `needs_review` sempre falso.
+
+Três mudanças para não repetir:
+
+- o `fit_novelty` **recusa** calibrar com classes diferentes das do
+  `.labels.json` dos pesos (antes, só avisava);
+- `GET /models` expõe `safeguards` por modelo — `novelty`, `quality`,
+  `conformal`, `framing` —, então uma referência recusada aparece como `false`
+  na primeira consulta, não num log;
+- a referência de 3 classes foi guardada como
+  `corn_disease_model.novelty.npz.bak-3classes` e a de produção, recalibrada.
+
 ### Regulando o volume
 
 `NOVELTY_SENSITIVITY` é o **orçamento do tempo do agrônomo**, não um parâmetro de
@@ -1162,6 +1829,18 @@ importam a mesma função de
 [`app/inference/preprocess.py`](app/inference/preprocess.py) — divergir aqui não
 gera erro, só derruba a acurácia em silêncio.
 
+**TTA igual na avaliação e na API.** As acurácias "+ TTA" deste documento vêm de
+quatro orientações (original, espelho horizontal, vertical e as duas) com a média
+das probabilidades. A API aplica exatamente as mesmas com `?tta=true` ou
+`INFERENCE_TTA=true` — sem isso, o número que vale em produção é a linha "sem
+TTA" de cada tabela. Ver [TTA em produção](README.md#tta-em-produção).
+
+**Qualidade e atenção são medidas por modelo.** `fit_quality` grava
+`models/<pesos>.quality.json` com os limites de nitidez, brilho e contraste do
+próprio dataset de treino; `audit_attention` mostra, por classe, se a decisão
+depende de uma região da imagem ou da foto inteira. Rode os dois a cada pesos
+novos, como o `fit_novelty`.
+
 **Os rótulos vêm do `.labels.json`.** O treino grava a ordem real das classes ao
 lado dos pesos; a API lê esse arquivo. A lista no `registry.py` é só fallback.
 Se a contagem de rótulos não bater com as saídas do modelo, o carregamento é
@@ -1187,6 +1866,16 @@ pasta reais nós não inspecionamos.
 - [x] Segunda arquitetura do `leaf-foliar` para a dupla validação, com a
       independência medida — ver [`leaf-foliar-b`](#leaf-foliar-b).
 - [ ] Repetir a medição de independência com imagens da própria frota.
+- [x] TTA na API, com as mesmas quatro orientações da avaliação — ver
+      [TTA em produção](README.md#tta-em-produção).
+- [ ] Medir quanto `view_agreement < 1` pega de erro no teste isolado, ao lado da
+      discordância entre `leaf-foliar` e `leaf-foliar-b`.
+- [x] Verificação de qualidade da captura, calibrada pelo dataset de cada modelo —
+      ver [qualidade da captura](README.md#qualidade-da-captura).
+- [ ] Recalibrar `fit_quality` sobre os datasets consolidados e deduplicados.
+- [x] Explicação por oclusão (`/predict/explain`) e auditoria de atenção por classe.
+- [ ] Rodar `audit_attention` no `rover-understory` em quarentena — é o caso de
+      controle: se ela não denunciar o atalho da sessão de fotografia, não serve.
 - [x] Severidade por segmentação de lesão, como área no quadro — ver
       [severidade](#severidade).
 - [ ] Severidade sobre a área da folha (segmentar a folha além da lesão) e

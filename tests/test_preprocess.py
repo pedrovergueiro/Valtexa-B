@@ -13,6 +13,7 @@ from app.inference.preprocess import (
     load_image_from_bytes,
     preprocess_batch,
     preprocess_image,
+    resize_like_tensorflow,
     scale_to_unit_range,
 )
 from tests.conftest import make_image_bytes
@@ -61,12 +62,54 @@ def test_resize_ignores_aspect_ratio_like_keras():
     assert image_to_array(wide, IMG_SIZE).shape == (IMG_SIZE, IMG_SIZE, 3)
 
 
-def test_applies_exif_orientation():
-    """Fotos de drone e celular costumam vir giradas só por metadado."""
+def _rotated_by_exif() -> bytes:
     exif = Image.Exif()
     exif[0x0112] = 6  # rotacionar 90°
-    rotated = load_image_from_bytes(make_image_bytes(size=(320, 240), exif=exif))
-    assert rotated.size == (240, 320)
+    return make_image_bytes(size=(320, 240), exif=exif)
+
+
+def test_keeps_the_pixels_as_stored_like_training():
+    """O treino decodifica sem girar pelo EXIF; girar aqui custou 0,4 a 0,5 ponto.
+
+    Um terço das fotos de milho traz rotação no EXIF. Girada, a foto é espremida
+    para o quadrado na outra direção — e o modelo nunca viu esse achatamento.
+    """
+    assert load_image_from_bytes(_rotated_by_exif()).size == (320, 240)
+
+
+def test_applies_exif_orientation_when_asked():
+    """Para mostrar a foto a uma pessoa, a rotação do EXIF é a certa."""
+    assert load_image_from_bytes(_rotated_by_exif(), apply_exif=True).size == (240, 320)
+
+
+def test_resize_matches_tensorflow_bilinear_by_hand():
+    """Centros de pixel, sem antialias: a conta do tf.image.resize, feita à mão."""
+    pixels = np.array([[0, 10], [20, 30]], dtype=np.float32)[..., None].repeat(3, axis=2)
+
+    resized = resize_like_tensorflow(pixels, 4)[..., 0]
+
+    np.testing.assert_allclose(resized[0], [0.0, 2.5, 7.5, 10.0])
+    np.testing.assert_allclose(resized[:, 0], [0.0, 5.0, 15.0, 20.0])
+
+
+@pytest.mark.parametrize("shape", [(128, 128), (300, 240), (1000, 750), (97, 413)])
+def test_resize_is_identical_to_tensorflow(shape):
+    """A garantia que importa: a API redimensiona como o treino redimensionou."""
+    tf = pytest.importorskip("tensorflow", reason="TensorFlow não instalado")
+    pixels = np.random.default_rng(0).integers(0, 256, (*shape, 3)).astype(np.uint8)
+
+    expected = tf.image.resize(tf.cast(pixels, tf.float32), (224, 224), method="bilinear").numpy()
+
+    np.testing.assert_allclose(resize_like_tensorflow(pixels, 224), expected, atol=1e-3)
+
+
+def test_severity_keeps_the_pillow_resize_it_was_trained_with():
+    image = load_image_from_bytes(make_image_bytes(size=(320, 240)))
+    pillow = image_to_array(image, IMG_SIZE, resampling="pillow")
+    expected = scale_to_unit_range(
+        np.asarray(image.resize((IMG_SIZE, IMG_SIZE), Image.Resampling.BILINEAR), np.float32)
+    )
+    np.testing.assert_allclose(pillow, expected)
 
 
 def test_rejects_empty_upload():

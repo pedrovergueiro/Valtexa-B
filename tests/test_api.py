@@ -43,6 +43,10 @@ class TestModelCatalogue:
             "coffee-foliar",
             ROVER,
             "aerial-canopy",
+            "citrus-foliar",
+            "citrus-foliar-cc",
+            "banana-foliar",
+            "banana-foliar-cc",
         }
 
     def test_reports_platform_and_readiness(self, client, fake_model):

@@ -1,15 +1,24 @@
-fastapi==0.115.0
+fastapi==0.141.1
 uvicorn[standard]==0.30.6
 python-multipart==0.0.9
 pydantic==2.9.2
 pydantic-settings==2.5.2
 pillow==10.4.0
 numpy==2.5.3
-# anyio 4.5+ deprecia o alias anyio.abc.BlockingPortal que este starlette usa.
-anyio==4.4.0
+# Python 3.14 removeu o aviso silencioso de asyncio.iscoroutinefunction, que o
+# fastapi 0.115 ainda chamava — com warnings-como-erro, o app nem importava. A
+# dupla abaixo é a que sobe nesta versão de Python; descer daqui exige descer o
+# Python junto.
+anyio==4.15.1
 
 # O Keras 3 é o framework; quem executa é o backend escolhido em
 # app/keras_backend.py (torch por padrão). A API de inferência não precisa do
 # TensorFlow — ele só aparece no pipeline de treino, em requirements-training.txt.
 keras==3.15.1
 torch==2.11.0
+
+# Opcionais em tempo de execução: sem eles a API sobe e o campo correspondente
+# vem nulo. O transformers serve o portão de enquadramento (app/framing.py); o
+# onnxruntime, o INFERENCE_RUNTIME=onnx (app/onnx_runtime.py).
+transformers==5.17.0
+onnxruntime==1.30.0

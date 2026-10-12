@@ -59,8 +59,13 @@ def macro_f1(report: Sequence[dict[str, float]]) -> float:
 
     É a métrica que denuncia o modelo que vai bem só nas classes abundantes: uma
     classe rara pesa aqui tanto quanto a maior de todas.
+
+    Classe sem nenhum exemplo no conjunto fica de fora: num teste externo que só
+    traz folhas doentes, "Healthy" teria F1 zero por construção, e a média
+    passaria a medir a composição do conjunto em vez do modelo.
     """
-    return float(np.mean([row["f1"] for row in report])) if report else 0.0
+    present = [row["f1"] for row in report if row["support"] > 0]
+    return float(np.mean(present)) if present else 0.0
 
 
 def format_report(
@@ -94,7 +99,8 @@ def format_report(
         row = "".join(f"{int(value):>8}" for value in matrix[index])
         lines.append(f"{name:<{width}}  {row}")
 
-    worst = min(report, key=lambda row: row["recall"]) if report else None
+    present = [row for row in report if row["support"] > 0]
+    worst = min(present, key=lambda row: row["recall"]) if present else None
     if worst is not None:
         lines.append(
             f"\nMenor recall: {worst['class_name']} ({worst['recall']:.3f}) — de cada 100 "
@@ -117,18 +123,21 @@ def evaluate_dataset(model, dataset, num_classes: int, *, tta: bool = False) -> 
             modelo estava inseguro, e a média acerta mais do que qualquer uma
             das quatro isolada.
     """
-    from app.keras_backend import to_numpy
+    from app.keras_backend import no_grad, to_numpy
 
     matrix = np.zeros((num_classes, num_classes), dtype=np.int64)
     for images, labels in dataset:
         batch = np.asarray(images)
-        probabilities = to_numpy(model(batch, training=False))
+        # Sem isto o backend torch grava o grafo de gradientes a cada lote — ver
+        # app.keras_backend.no_grad.
+        with no_grad():
+            probabilities = to_numpy(model(batch, training=False))
 
-        if tta:
-            for transformada in (batch[:, :, ::-1], batch[:, ::-1], batch[:, ::-1, ::-1]):
-                probabilities = probabilities + to_numpy(
-                    model(np.ascontiguousarray(transformada), training=False)
-                )
+            if tta:
+                for transformada in (batch[:, :, ::-1], batch[:, ::-1], batch[:, ::-1, ::-1]):
+                    probabilities = probabilities + to_numpy(
+                        model(np.ascontiguousarray(transformada), training=False)
+                    )
 
         predictions = probabilities.argmax(axis=1)
         matrix += confusion_matrix(np.asarray(labels), predictions, num_classes)

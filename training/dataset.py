@@ -128,6 +128,17 @@ def build_augmentation() -> list[keras.Layer]:
     seriam contraproducentes, já que a cor é justamente o sinal que separa
     ferrugem, mancha e folha saudável.
 
+    O espelho é **só horizontal**, e isso foi testado. O citros treinado assim acerta
+    88,8% de pé e 82,3% de cabeça para baixo (30/09/2026), e o TTA da API usa também
+    o espelho vertical e o giro de 180°. Retreinado com ``horizontal_and_vertical``
+    (01/10/2026), a diferença de orientação some (0,7 ponto contra 6,6), mas sem
+    ganho líquido: com TTA o acerto é o mesmo (88,67%), sem TTA o isolado perde 1,8
+    ponto, e a versão comercial ficou **pior** no campo (0,634 contra 0,693; 66 contra
+    70 das 95 fotos). Como as quatro vistas do TTA formam um grupo fechado, com TTA a
+    resposta já é idêntica para a foto em pé e de cabeça para baixo; o rover não usa
+    TTA por padrão (``ROVER_TTA=false``, porque ele piora a detecção por planta).
+    Não mude o espelho sem repetir essa medição.
+
     Devolve as camadas soltas, e não um ``keras.Sequential``, porque elas são
     aplicadas dentro do ``tf.data``. Individualmente cada uma detecta o contexto
     do ``tf.data`` e emite operações do TensorFlow, o que funciona em qualquer
@@ -173,6 +184,8 @@ def load_datasets(
     seed: int = DEFAULT_SEED,
     test_split: float = 0.0,
     cache_dir: Path | None = None,
+    backgrounds: np.ndarray | None = None,
+    background_prob: float = 0.0,
 ) -> tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset | None, list[str]]:
     """Monta os datasets de treino, validação e teste a partir de pastas por classe.
 
@@ -187,6 +200,10 @@ def load_datasets(
             validação. Zero devolve ``None`` no lugar dele.
         cache_dir: onde guardar as imagens já decodificadas. Acelera muito as
             épocas seguintes; ``None`` desliga o cache.
+        backgrounds: recortes de fundo real ``(N, img_size, img_size, 3)``. Com
+            eles, a folha fotografada sobre papel é colada sobre um deles com
+            probabilidade ``background_prob`` — só no treino, e sorteado de novo a
+            cada época. Ver :mod:`training.background`.
 
     Por que existe um conjunto de teste separado: a melhor época é escolhida
     pela ``val_accuracy``, então esse número já viu o conjunto de validação e
@@ -203,18 +220,30 @@ def load_datasets(
         raise ValueError(f"Nenhuma imagem encontrada em {data_dir}.")
 
     train_idx, val_idx, test_idx = split_indices(len(paths), seed, validation_split, test_split)
+    swapping = backgrounds is not None and background_prob > 0
 
-    def subset(indices) -> tf.data.Dataset:
+    def with_mask(image, label):
+        """Acrescenta a máscara da folha — calculada aqui, antes do cache."""
+        from training.background import mask_or_empty
+
+        mask = tf.numpy_function(mask_or_empty, [image], tf.uint8)
+        mask.set_shape((img_size, img_size))
+        return image, mask, label
+
+    def subset(indices, *, masks: bool = False) -> tf.data.Dataset:
         """Dataset decodificado e **sem lote** — quem agrupa é o ``finish``."""
         selected = [paths[i] for i in indices]
         selected_labels = [labels[i] for i in indices]
         dataset = tf.data.Dataset.from_tensor_slices((selected, selected_labels))
-        return dataset.map(
+        dataset = dataset.map(
             lambda path, label: (_decode(path, img_size), label),
             num_parallel_calls=tf.data.AUTOTUNE,
         )
+        if masks:
+            dataset = dataset.map(with_mask, num_parallel_calls=tf.data.AUTOTUNE)
+        return dataset
 
-    train_ds = subset(train_idx)
+    train_ds = subset(train_idx, masks=swapping)
     holdout_ds = subset(val_idx)
     test_ds = subset(test_idx) if len(test_idx) else None
 
@@ -228,6 +257,20 @@ def load_datasets(
             images = layer(images, training=True)
         return images, labels
 
+    def swap(images, masks, labels):
+        from training.background import swap_with_masks
+
+        def run(batch, batch_masks):
+            # Um gerador por chamada: o tf.data chama em paralelo, e o Generator
+            # do NumPy não é seguro entre threads.
+            return swap_with_masks(
+                batch, batch_masks, backgrounds, background_prob, np.random.default_rng()
+            )
+
+        swapped = tf.numpy_function(run, [images, masks], tf.float32)
+        swapped.set_shape(images.shape)
+        return swapped, labels
+
     def normalize(images, labels):
         return scale_to_unit_range(images), labels
 
@@ -236,7 +279,8 @@ def load_datasets(
         #
         # 1. o cache guarda a imagem **decodificada e redimensionada**, que é o
         #    gargalo (a GPU fica ociosa esperando a CPU abrir JPEG) e não muda
-        #    entre épocas;
+        #    entre épocas — e, com a troca de fundo, a máscara da folha, que
+        #    também não muda;
         # 2. o embaralhamento vem depois do cache e antes do lote, para sortear
         #    imagens e não blocos já formados;
         # 3. a augmentation vem por último porque precisa sortear de novo a cada
@@ -249,6 +293,10 @@ def load_datasets(
             dataset = dataset.shuffle(_shuffle_buffer(len(train_idx), img_size), seed=seed)
 
         dataset = dataset.batch(batch_size)
+        if training and swapping:
+            # Antes das outras augmentations: a folha é girada junto com o fundo
+            # novo, e não o fundo de papel antes de ser trocado.
+            dataset = dataset.map(swap, num_parallel_calls=tf.data.AUTOTUNE)
         if training:
             dataset = dataset.map(augment, num_parallel_calls=tf.data.AUTOTUNE)
         # Prefetch limitado, e não AUTOTUNE: cada lote já decodificado ocupa

@@ -21,7 +21,7 @@ import shutil
 from collections import Counter
 from pathlib import Path
 
-from training.prepare_dataset import is_image
+from training.prepare_dataset import is_image, looks_like_label_mask
 
 PREFIX_TO_CLASS = {
     # Milho -> leaf-foliar
@@ -79,6 +79,11 @@ def main() -> None:
 
     for image in sorted(args.source.rglob("*")):
         if not is_image(image):
+            continue
+        # O PlantSeg publica a máscara de cada foto com o mesmo nome, em .png.
+        # Foi assim que 388 máscaras viraram "fotos" de doença no leaf-foliar.
+        if looks_like_label_mask(image):
+            ignorados["máscaras de segmentação"] += 1
             continue
         canonical = classify(image.name)
         if canonical is None:

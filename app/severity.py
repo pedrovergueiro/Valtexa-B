@@ -56,6 +56,8 @@ class SeverityModel:
 
     def load(self) -> None:
         """Carrega os pesos, se existirem. Falhar aqui nunca derruba a API."""
+        if settings.inference_runtime == "onnx" and self._load_onnx():
+            return
         if not self.path.exists():
             logger.info(
                 "Sem modelo de severidade em %s — 'severity' virá nulo. Treine com "
@@ -66,15 +68,30 @@ class SeverityModel:
         from app.keras_backend import configure
 
         configure()
-        import keras
-
         try:
+            import keras
+
             model = keras.models.load_model(self.path, compile=False)
         except Exception as exc:  # pesos ruins desligam só a severidade, não a API
             logger.error("Falha ao carregar o modelo de severidade %s: %s", self.path, exc)
             return
         self.attach(model)
         logger.info("Modelo de severidade carregado de %s", self.path)
+
+    def _load_onnx(self) -> bool:
+        """Serve a segmentação pelo ONNX Runtime, se o grafo existir."""
+        graph = self.path.with_suffix(".onnx")
+        if not graph.exists():
+            return False
+        try:
+            from app.onnx_runtime import OnnxModel
+
+            self.attach(OnnxModel(graph))
+        except (ImportError, OSError, RuntimeError, ValueError) as exc:
+            logger.error("Falha ao carregar %s: %s — usando o Keras.", graph, exc)
+            return False
+        logger.info("Modelo de severidade carregado de %s (ONNX Runtime)", graph)
+        return True
 
     def attach(self, model: Any) -> None:
         """Anexa um modelo já carregado — é também por aqui que os testes entram."""
@@ -89,11 +106,19 @@ class SeverityModel:
         """Severidade de cada imagem, numa passada só pelo modelo."""
         if self._model is None or not images:
             return [None] * len(images)
-        from app.keras_backend import to_numpy
+        from app.keras_backend import no_grad, to_numpy
 
-        batch = preprocess_batch(images, self._img_size)
+        # O Pillow, não o bilinear do TensorFlow: é com ele que o train_severity
+        # redimensionou imagem e máscara.
+        batch = preprocess_batch(images, self._img_size, resampling="pillow")
+        limit = settings.max_forward_batch  # ver Settings.max_forward_batch
         try:
-            return lesion_fraction(to_numpy(self._model(batch, training=False)))
+            fractions: list[float] = []
+            with no_grad():
+                for start in range(0, len(batch), limit):
+                    masks = self._model(batch[start : start + limit], training=False)
+                    fractions.extend(lesion_fraction(to_numpy(masks)))
+            return fractions
         except (ValueError, RuntimeError) as exc:
             # Severidade é um extra: se falhar, a classificação continua valendo.
             logger.error("Falha ao estimar severidade: %s", exc)

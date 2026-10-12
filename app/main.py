@@ -3,31 +3,61 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections import Counter
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Literal
 
-from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    Body,
+    FastAPI,
+    File,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
-from app.config import ALLOWED_CONTENT_TYPES, UPLOAD_CHUNK_BYTES, settings
+from app import metrics
+from app.config import ALLOWED_CONTENT_TYPES, HTTP_422, UPLOAD_CHUNK_BYTES, settings
+from app.contorno_api import router as contorno_router
+from app.fields_api import router as fields_router
+from app.framing import framing_model
 from app.inference.preprocess import InvalidImageError
-from app.model import CornDiseaseModel, ModelNotLoadedError, Upload
-from app.registry import MODEL_SPECS, Platform, registry
-from app.review import InvalidClassNameError, ReviewQueue, UnknownReviewItemError
+from app.model import CornDiseaseModel, ModelNotLoadedError, UnknownClassError, Upload
+from app.registry import MODEL_SPECS, Platform, default_for_crop, registry, specs_by_crop
+from app.review import (
+    TRAINING_CONSENT_HEADER,
+    InvalidClassNameError,
+    ReviewQueue,
+    UnknownReviewItemError,
+    consent_allows,
+)
+from app.rover_api import router as rover_router
 from app.schemas import (
     BatchPredictionResponse,
+    CropChoices,
     ErrorResponse,
+    ExplanationResponse,
     HealthResponse,
+    ModelChoice,
     ModelInfo,
     PredictionResponse,
     ReviewItem,
     ReviewStats,
     ReviewVerdict,
 )
+from app.service_auth import ServiceTokenMiddleware
 from app.severity import severity_model
+from app.terrain_api import router as terrain_router
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +87,21 @@ PlatformQuery = Query(
     default=None,
     description="Alternativa ao 'model': escolhe o modelo padrão da plataforma.",
 )
+TrainingConsentHeader = Header(
+    default=None,
+    alias=TRAINING_CONSENT_HEADER,
+    description=(
+        "1 = o cliente autorizou o uso da imagem no treino; 0 = não. Com 0 a imagem "
+        "não vai para a fila de revisão. Ausente = decisão de quem opera (REVIEW_DIR)."
+    ),
+)
+TtaQuery = Query(
+    default=None,
+    description=(
+        "Prevê em quatro orientações e tira a média — é como as acurácias do "
+        "MODELS.md foram medidas. Custa 4x. Vazio segue INFERENCE_TTA."
+    ),
+)
 
 
 @asynccontextmanager
@@ -68,6 +113,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     )
     registry.load_all()
     severity_model.load()
+    framing_model.load()
     yield
 
 
@@ -83,6 +129,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Lido a cada requisição (e não fixado aqui) para os testes poderem trocar o token.
+app.add_middleware(ServiceTokenMiddleware, token_getter=lambda: settings.service_token)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -90,6 +138,16 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+
+# Por fora de tudo: mede a requisição inteira, inclusive a recusa do token.
+app.add_middleware(metrics.MetricasMiddleware)
+
+
+app.include_router(terrain_router)
+app.include_router(contorno_router)
+app.include_router(rover_router)
+app.include_router(fields_router)
 
 
 @app.exception_handler(InvalidImageError)
@@ -107,6 +165,25 @@ async def _handle_model_not_loaded(_: Request, exc: ModelNotLoadedError) -> JSON
     )
 
 
+@app.exception_handler(RequestValidationError)
+async def _handle_validation(_: Request, exc: RequestValidationError) -> JSONResponse:
+    """422 legível mesmo quando o valor recusado não cabe em JSON.
+
+    O corpo de erro do FastAPI devolve o valor que o cliente mandou. Quando esse
+    valor é ``NaN`` ou infinito — que os modelos deste projeto recusam de
+    propósito, porque toda comparação com NaN é falsa —, serializar a resposta
+    estoura e o 422 vira 500. Aqui o valor ofensivo vira texto antes de sair.
+    """
+    return JSONResponse(
+        status_code=HTTP_422,
+        content={"detail": jsonable_encoder(exc.errors(), custom_encoder={float: _finito})},
+    )
+
+
+def _finito(value: float) -> float | str:
+    return value if math.isfinite(value) else repr(value)
+
+
 @app.get("/health", response_model=HealthResponse, summary="Estado da API")
 def health() -> HealthResponse:
     """Responde ``200`` enquanto o processo estiver de pé.
@@ -122,23 +199,97 @@ def health() -> HealthResponse:
     )
 
 
+@app.get(
+    "/metrics",
+    summary="Métricas da IA (formato Prometheus)",
+    response_class=Response,
+    responses={200: {"content": {metrics.CONTENT_TYPE: {}}}},
+)
+def prometheus_metrics() -> Response:
+    """Inferências, erros, latência e classes por modelo, e o HTTP por rota.
+
+    Exige o ``SERVICE_TOKEN`` quando ele está definido (o middleware do token vale
+    aqui como em toda rota): o Prometheus manda ``Authorization: Bearer``.
+    """
+    carregados = {key: model.is_loaded for key, model in registry.models.items()}
+    return Response(
+        metrics.render([metrics.modelos_carregados(carregados)]),
+        media_type=metrics.CONTENT_TYPE,
+    )
+
+
 @app.get("/models", response_model=list[ModelInfo], summary="Catálogo de modelos")
 def models() -> list[ModelInfo]:
-    """Lista todos os modelos do catálogo e quais estão prontos para prever."""
-    return [
-        ModelInfo(
-            key=spec.key,
-            title=spec.title,
-            platform=spec.platform.value,
-            summary=spec.summary,
-            classes=list(spec.class_names),
-            img_size=spec.img_size,
-            datasets=list(spec.datasets),
-            loaded=registry.get(spec.key).is_loaded,
-            needs_field_data=spec.needs_field_data,
+    """Lista todos os modelos do catálogo, quais estão prontos e com que salvaguardas.
+
+    ``safeguards`` é o que teria mostrado, no primeiro dia, que a novidade do
+    ``leaf-foliar`` estava desligada: a referência era recusada no carregamento e
+    o único rastro era uma linha de log.
+    """
+    infos = []
+    for spec in MODEL_SPECS.values():
+        model = registry.get(spec.key)
+        infos.append(
+            ModelInfo(
+                key=spec.key,
+                title=spec.title,
+                platform=spec.platform.value,
+                summary=spec.summary,
+                classes=list(spec.class_names),
+                img_size=spec.img_size,
+                datasets=list(spec.datasets),
+                loaded=model.is_loaded,
+                needs_field_data=spec.needs_field_data,
+                runtime=model.runtime,
+                safeguards=model.safeguards if model.is_loaded else {},
+                display_name=spec.label,
+                crop=spec.crop,
+                variant=spec.variant,
+                license=spec.license,
+                field_accuracy=spec.field_accuracy,
+                test_accuracy=spec.test_accuracy,
+                recommended=spec.recommended,
+            )
         )
-        for spec in MODEL_SPECS.values()
-    ]
+    return infos
+
+
+@app.get(
+    "/models/choices",
+    response_model=list[CropChoices],
+    summary="Versões de modelo por cultura, para escolher qual usar",
+)
+def model_choices() -> list[CropChoices]:
+    """As versões de cada cultura, como um seletor de modelos.
+
+    Para cada cultura: as versões disponíveis (a recomendada primeiro, depois
+    pelo número de campo), com a licença dos dados de treino, e a que o rover
+    usa quando manda só ``crop=``. Quem escolhe passa a ``key`` em ``model=`` —
+    no ``/predict`` de um upload manual ou no ``/predict/rover-frame``.
+    """
+    result = []
+    for crop, options in sorted(specs_by_crop().items()):
+        result.append(
+            CropChoices(
+                crop=crop,
+                rover_default=default_for_crop(crop).key,
+                options=[
+                    ModelChoice(
+                        key=spec.key,
+                        display_name=spec.label,
+                        variant=spec.variant,
+                        summary=spec.summary,
+                        license=spec.license,
+                        field_accuracy=spec.field_accuracy,
+                        test_accuracy=spec.test_accuracy,
+                        recommended=spec.recommended,
+                        loaded=registry.get(spec.key).is_loaded,
+                    )
+                    for spec in options
+                ],
+            )
+        )
+    return result
 
 
 @app.get(
@@ -165,6 +316,8 @@ async def predict(
     file: UploadFile = File(description="Imagem JPEG, PNG ou WebP."),
     model: str | None = ModelQuery,
     platform: Platform | None = PlatformQuery,
+    tta: bool | None = TtaQuery,
+    training_consent: str | None = TrainingConsentHeader,
 ) -> PredictionResponse:
     """Classifica uma única imagem e devolve as probabilidades por classe."""
     selected = _resolve_ready_model(model, platform)
@@ -173,9 +326,9 @@ async def predict(
 
     # A inferência é síncrona e pesada: rodá-la no event loop travaria todas as
     # outras requisições enquanto o TensorFlow trabalha.
-    prediction = await run_in_threadpool(selected.predict, filename, data)
+    prediction = await run_in_threadpool(selected.predict, filename, data, tta)
 
-    if prediction.needs_review and review_queue.enabled:
+    if prediction.needs_review and review_queue.enabled and consent_allows(training_consent):
         await run_in_threadpool(
             review_queue.enqueue, data, prediction, file.content_type or "image/jpeg"
         )
@@ -192,6 +345,8 @@ async def predict_batch(
     files: list[UploadFile] = File(description="Imagens JPEG, PNG ou WebP."),
     model: str | None = ModelQuery,
     platform: Platform | None = PlatformQuery,
+    tta: bool | None = TtaQuery,
+    training_consent: str | None = TrainingConsentHeader,
 ) -> BatchPredictionResponse:
     """Classifica várias imagens de uma vez — ex.: todas as fotos de um voo.
 
@@ -219,9 +374,9 @@ async def predict_batch(
     uploads: list[Upload] = [
         (file.filename or "upload", await _read_validated_upload(file)) for file in files
     ]
-    results = await run_in_threadpool(selected.predict_many, uploads)
+    results = await run_in_threadpool(selected.predict_many, uploads, tta)
 
-    if review_queue.enabled:
+    if review_queue.enabled and consent_allows(training_consent):
         await run_in_threadpool(_enqueue_flagged, uploads, results, files)
 
     counts = Counter(result.predicted_class for result in results)
@@ -231,7 +386,77 @@ async def predict_batch(
         summary={name: counts.get(name, 0) for name in selected.class_names},
         abstained_count=sum(1 for result in results if result.abstained),
         needs_review_count=sum(1 for result in results if result.needs_review),
+        quality_issue_count=sum(
+            1 for result in results if result.quality is not None and not result.quality.ok
+        ),
+        out_of_scope_count=sum(
+            1 for result in results if result.framing is not None and not result.framing.in_scope
+        ),
+        ambiguous_count=sum(
+            1 for result in results if result.prediction_set and len(result.prediction_set) > 1
+        ),
+        empty_set_count=sum(1 for result in results if result.prediction_set == []),
     )
+
+
+@app.post(
+    "/predict/explain",
+    response_model=ExplanationResponse,
+    responses={
+        **ERROR_RESPONSES,
+        422: {"model": ErrorResponse, "description": "Classe inexistente no modelo."},
+    },
+    summary="Mostra onde o modelo olhou para decidir",
+)
+async def explain(
+    file: UploadFile = File(description="Imagem JPEG, PNG ou WebP."),
+    model: str | None = ModelQuery,
+    platform: Platform | None = PlatformQuery,
+    target_class: str | None = Query(
+        default=None,
+        description=(
+            "Classe a explicar. Vazio explica a prevista; informar outra responde "
+            "'por que não esta?'."
+        ),
+    ),
+    grid: int = Query(
+        default=7,
+        ge=3,
+        le=14,
+        description="Células por lado. Custa grid² + 1 passadas pelo modelo.",
+    ),
+    overlay: bool = Query(default=True, description="Inclui a foto com o mapa em PNG base64."),
+    method: Literal["occlusion", "rise"] = Query(
+        default="occlusion",
+        description=(
+            "occlusion: uma célula por vez, grid² + 1 passadas. rise: metade da imagem "
+            "coberta ao acaso, samples + 1 passadas — enxerga lesões espalhadas, que a "
+            "oclusão não vê."
+        ),
+    ),
+    samples: int = Query(default=256, ge=32, le=1024, description="Máscaras do rise."),
+) -> ExplanationResponse:
+    """Cobre a imagem célula por célula e mede quanto a confiança cai em cada uma.
+
+    É ferramenta de console e de auditoria, não de triagem de voo: custa dezenas
+    de passadas por imagem. Nada aqui entra na fila de revisão — quem pede uma
+    explicação já está olhando para a imagem.
+    """
+    selected = _resolve_ready_model(model, platform)
+    data = await _read_validated_upload(file)
+    try:
+        return await run_in_threadpool(
+            selected.explain,
+            file.filename or "upload",
+            data,
+            target_class,
+            grid,
+            overlay,
+            method,
+            samples,
+        )
+    except UnknownClassError as exc:
+        raise HTTPException(HTTP_422, str(exc)) from exc
 
 
 @app.get(
@@ -254,13 +479,29 @@ def review_stats() -> ReviewStats:
 def review_pending(
     limit: int = Query(default=50, ge=1, le=500, description="Itens por página."),
     offset: int = Query(default=0, ge=0, description="Quantos pular, para paginar."),
+    order: Literal["recentes", "valor"] = Query(
+        default="recentes",
+        description=(
+            "'recentes': do mais novo ao mais antigo. 'valor': o que mais ensina ao próximo "
+            "treino primeiro (aprendizado ativo), com o motivo de cada item."
+        ),
+    ),
 ) -> list[ReviewItem]:
-    """Lista o que a detecção de novidade separou, do mais recente ao mais antigo.
+    """Lista o que a detecção de novidade separou.
 
     Cada item traz o palpite do modelo e a pontuação de novidade: o agrônomo
     decide melhor sabendo o que a máquina respondeu e o quanto ela estranhou.
+    Com ``order=valor``, a fila vem ordenada pelo que mais ensina — incerteza,
+    novidade, classe rara entre as já rotuladas —, e o agrônomo que só tem tempo
+    para 50 fotos rotula as 50 que mais valem.
     """
     _require_review_queue()
+    if order == "valor":
+        ranked = review_queue.prioritized(budget=offset + limit)[offset : offset + limit]
+        return [
+            ReviewItem(**item, priority=choice.position, priority_reasons=list(choice.reasons))
+            for item, choice in ranked
+        ]
     return [ReviewItem(**item) for item in review_queue.pending(limit=limit, offset=offset)]
 
 
@@ -303,7 +544,7 @@ def review_label(item_id: str, verdict: ReviewVerdict = Body(...)) -> ReviewItem
     except UnknownReviewItemError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except InvalidClassNameError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(HTTP_422, str(exc)) from exc
     return ReviewItem(**metadata)
 
 

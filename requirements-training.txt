@@ -14,3 +14,13 @@ tensorflow==2.20.0
 #
 # Confira o que o seu torch suporta com:
 #   python -c "import torch; print(torch.cuda.get_arch_list())"
+
+# As cabeças sobre o embedding do portão (training.fit_heads) usam o dNATY para buscar a
+# arquitetura. Ele fica fora desta lista de propósito: as dependências declaradas dele
+# puxam o torchvision, que pode trocar o torch da NVIDIA instalado acima. Instale sem
+# dependências (o que ele usa de fato já está aqui, mais o scipy):
+#
+#   pip install --no-deps "dnaty>=2.1.1" scipy
+#
+# Licença BSL-1.1: uso não comercial liberado; uso comercial pede licença do autor.
+# Só o treino depende dele — a API roda a rede exportada em NumPy.

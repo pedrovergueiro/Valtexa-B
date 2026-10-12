@@ -23,6 +23,8 @@ import shutil
 from collections import defaultdict
 from pathlib import Path
 
+import numpy as np
+
 from app.registry import (
     MODEL_SPECS,
     SOURCE_CLASS_ALIASES,
@@ -50,6 +52,39 @@ def is_image(item: Path) -> bool:
         and item.suffix.lower() in IMAGE_SUFFIXES
         and not item.name.startswith(APPLEDOUBLE_PREFIX)
     )
+
+
+MASK_MAX_LEVELS = 16
+"""Tons de cinza distintos a partir dos quais uma imagem cinza é foto, não máscara.
+
+Um mapa de rótulo guarda índices de classe — 0 para o fundo, um valor por
+doença — e tem meia dúzia de tons. Uma foto em tons de cinza, mesmo escura, tem
+dezenas ou centenas.
+"""
+
+
+def looks_like_label_mask(item: Path) -> bool:
+    """Se a imagem é um mapa de rótulo de segmentação, e não uma foto.
+
+    Encontrado em 26/09/2026: 388 máscaras do PlantSeg — um ``.png`` por foto,
+    com o mesmo nome — entraram no dataset do ``leaf-foliar`` como fotos de
+    ``Common_Rust``, ``Blight`` e ``Gray_Leaf_Spot``, 55 delas no teste isolado. O
+    modelo aprendeu a diagnosticar imagens pretas com polígonos cinza, e acertava
+    80% delas. Nenhuma checagem de nome pega isso: a máscara tem o nome da foto.
+    """
+    from PIL import Image
+
+    try:
+        with Image.open(item) as image:
+            image.draft("RGB", (256, 256))  # só JPEG decodifica menor; é uma dica
+            small = image.convert("RGB")
+            small.thumbnail((256, 256), Image.Resampling.NEAREST)
+    except OSError:
+        return False
+    pixels = np.asarray(small)
+    red, green, blue = pixels[..., 0], pixels[..., 1], pixels[..., 2]
+    gray = bool((red == green).all() and (green == blue).all())
+    return gray and len(np.unique(red)) <= MASK_MAX_LEVELS
 
 
 def parse_args() -> argparse.Namespace:
@@ -127,15 +162,21 @@ def execute_plan(
         destination.mkdir(parents=True, exist_ok=True)
         total = 0
 
+        masks = 0
         for directory in directories:
             prefix = _slug(directory.name)
             for image in sorted(directory.iterdir()):
                 if not is_image(image):
                     continue
+                if looks_like_label_mask(image):
+                    masks += 1
+                    continue
                 transfer(str(image), str(destination / f"{prefix}__{image.name}"))
                 total += 1
 
         counts[canonical] = total
+        if masks:
+            print(f"  {canonical}: {masks} máscaras de segmentação recusadas (não são fotos)")
 
     return counts
 

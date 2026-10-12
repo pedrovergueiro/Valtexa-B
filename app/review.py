@@ -33,6 +33,32 @@ from app.schemas import PredictionResponse
 
 logger = logging.getLogger(__name__)
 
+TRAINING_CONSENT_HEADER = "X-Training-Consent"
+"""Cabeçalho com que o SaaS diz se o cliente da imagem autorizou o uso no treino.
+
+Brief, seção 32: dado de cliente nunca entra no ciclo de treino sem SIM. O SaaS
+manda ``0`` ou ``1`` em toda chamada de inferência; com ``0``, a imagem é
+diagnosticada normalmente e **não** vai para a fila de revisão.
+"""
+
+_RECUSAS = frozenset({"0", "false", "nao", "não", "no", "n"})
+
+
+def consent_allows(value: str | None) -> bool:
+    """Se a imagem pode ir para a fila de revisão (que alimenta o treino).
+
+    Sem o cabeçalho, vale a decisão de quem opera o servidor (``REVIEW_DIR``): é o
+    uso local, com imagem do próprio operador. Com o cabeçalho, só ``1`` libera —
+    qualquer valor que não seja um SIM claro conta como NÃO.
+    """
+    if value is None:
+        return True
+    texto = value.strip().lower()
+    if texto in _RECUSAS:
+        return False
+    return texto in {"1", "true", "sim", "yes", "s"}
+
+
 PENDING = "pending"
 LABELED = "labeled"
 
@@ -77,9 +103,16 @@ class ReviewQueue:
         return self._directory / PENDING if self._directory else None
 
     def enqueue(
-        self, image_bytes: bytes, prediction: PredictionResponse, content_type: str
+        self,
+        image_bytes: bytes,
+        prediction: PredictionResponse,
+        content_type: str,
+        context: dict | None = None,
     ) -> str | None:
         """Arquiva uma imagem para revisão e devolve o id gerado.
+
+        ``context`` guarda de onde a imagem veio — no rover, o talhão, a rua, a
+        câmera e a zona da planta —, para o agrônomo e para o próximo treino.
 
         Falhas de escrita são registradas em log mas **não** derrubam a previsão:
         perder um item da fila é ruim, devolver 500 para o cliente por causa de
@@ -95,7 +128,11 @@ class ReviewQueue:
             folder.mkdir(parents=True, exist_ok=True)
             (folder / f"{item_id}{_suffix_for(content_type)}").write_bytes(image_bytes)
             (folder / f"{item_id}.json").write_text(
-                json.dumps(_metadata(item_id, prediction), ensure_ascii=False, indent=2),
+                json.dumps(
+                    {**_metadata(item_id, prediction), "context": context},
+                    ensure_ascii=False,
+                    indent=2,
+                ),
                 encoding="utf-8",
             )
         except OSError as exc:
@@ -203,6 +240,44 @@ class ReviewQueue:
         )
         return metadados
 
+    def labeled(self) -> list[dict]:
+        """Os metadados dos itens já diagnosticados, de todas as classes."""
+        if self._directory is None:
+            return []
+        encontrados = []
+        for caminho in (self._directory / LABELED).glob("*/*.json"):
+            try:
+                encontrados.append(json.loads(caminho.read_text(encoding="utf-8")))
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.error("Metadados ilegíveis em %s: %s", caminho, exc)
+        return encontrados
+
+    def prioritized(self, budget: int, strategy: str = "uncertainty") -> list[tuple[dict, object]]:
+        """Os pendentes na ordem em que mais ensinam ao próximo treino.
+
+        O agrônomo não rotula tudo o que o rover manda; ordenar por data gasta o
+        tempo dele com folha que o modelo já acerta. Aqui a ordem sai de
+        :func:`app.active_learning.select_for_review`: incerteza, novidade, classe
+        rara entre as já rotuladas e cotas por classe, com o motivo de cada item.
+
+        Returns:
+            ``(metadados, Selection)`` na ordem de prioridade, até ``budget`` itens.
+        """
+        from app.active_learning import select_for_review
+
+        pendentes = self._all_metadata()
+        if not pendentes:
+            return []
+        por_id = {item["id"]: item for item in pendentes}
+        escolhidos = select_for_review(
+            [_learning_item(item) for item in pendentes],
+            [_learning_item(item) for item in self.labeled()],
+            budget=budget,
+            strategy=strategy,
+            seed=0,
+        )
+        return [(por_id[s.id], s) for s in escolhidos if s.id in por_id]
+
     def _all_metadata(self) -> list[dict]:
         """Lê o JSON de cada item pendente, ignorando os ilegíveis."""
         if self._directory is None:
@@ -242,8 +317,28 @@ def _metadata(item_id: str, prediction: PredictionResponse) -> dict:
         "confidence": prediction.confidence,
         "novelty_score": prediction.novelty_score,
         "probabilities": {item.class_name: item.probability for item in prediction.probabilities},
+        # O aprendizado ativo usa os dois: conjunto conformal ambíguo é incerteza,
+        # e o que o portão recusou vai para uma trilha à parte.
+        "prediction_set": prediction.prediction_set,
+        "in_scope": None if prediction.framing is None else prediction.framing.in_scope,
         "reviewed_label": None,
         "reviewed_by": None,
+    }
+
+
+def _learning_item(meta: dict) -> dict:
+    """Os metadados da fila no formato de :class:`app.active_learning.ReviewItem`."""
+    return {
+        "id": meta["id"],
+        "model_key": meta.get("model_key", ""),
+        "predicted_class": meta.get("model_guess", ""),
+        "confidence": meta.get("confidence", 0.0),
+        "probabilities": meta.get("probabilities") or {},
+        "novelty_score": meta.get("novelty_score"),
+        "prediction_set": meta.get("prediction_set"),
+        "in_scope": meta.get("in_scope"),
+        "created_at": meta.get("captured_at", ""),
+        "label": meta.get("reviewed_label"),
     }
 
 
