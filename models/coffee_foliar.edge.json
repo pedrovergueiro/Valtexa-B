@@ -1,0 +1,200 @@
+{
+  "version": 1,
+  "crop": "coffee",
+  "head": {
+    "encoder_model_id": "google/siglip2-base-patch16-224",
+    "encoder_sha256": "1a2360fc19f12ecd01f93c727ba946843008357b328881468258cb3033da1389",
+    "input_size": 224
+  },
+  "healthy_label": "Healthy",
+  "event_threshold": 0.97,
+  "min_event_tiles": 1,
+  "near_miss_threshold": 0.9612,
+  "anomaly_mean_confidence_below": null,
+  "tile_mm": 150.0,
+  "overlap": 0.25,
+  "hfov_deg": 127.0,
+  "vfov_deg": 110.0,
+  "default_distance_mm": 270.0,
+  "tile_batch": 32,
+  "tile_probabilities": "full",
+  "evidence": {
+    "bin_edges": [
+      0.0,
+      0.02,
+      0.05,
+      0.1,
+      0.2,
+      0.35,
+      0.5,
+      0.65,
+      0.8,
+      0.9,
+      0.95,
+      0.98,
+      0.99,
+      0.995,
+      0.999,
+      1.0
+    ],
+    "llr_tables": {
+      "Cercospora_Leaf_Spot": [
+        -0.11218,
+        0.12479,
+        2.22938,
+        -4.50517,
+        -7.99905,
+        1.95751,
+        1.31342,
+        5.79079,
+        3.50166,
+        7.40687,
+        5.06109,
+        -6.47523,
+        -6.47523,
+        -6.47523,
+        -6.47523
+      ],
+      "Leaf_Miner_Damage": [
+        -0.11568,
+        -0.10478,
+        -6.12423,
+        0.68497,
+        -0.47295,
+        2.45741,
+        3.79609,
+        2.25902,
+        1.16906,
+        3.59788,
+        5.67667,
+        -6.47523,
+        -6.47523,
+        -6.47523,
+        -6.47523
+      ],
+      "Phoma_Leaf_Spot": [
+        -0.11699,
+        -0.17142,
+        -4.94422,
+        5.23258,
+        -6.21286,
+        6.23205,
+        2.06024,
+        0.77442,
+        1.98153,
+        2.81214,
+        9.78109,
+        -6.47523,
+        -6.47523,
+        -6.47523,
+        -6.47523
+      ],
+      "Rust": [
+        -0.11814,
+        -0.16402,
+        -0.13633,
+        0.01103,
+        3.73786,
+        -0.25741,
+        5.15245,
+        0.00696,
+        -0.04855,
+        0.62616,
+        2.90665,
+        -6.47523,
+        -6.47523,
+        -6.47523,
+        -6.47523
+      ]
+    },
+    "llr_clip": 1.0,
+    "tile_correlation": 1.0,
+    "event_evidence": -0.041778,
+    "near_miss_evidence": -0.078157
+  },
+  "measured": {
+    "orcamento_quadros_sadios": 0.05,
+    "fora_da_amostra": {
+      "partes": 5,
+      "plantas_doentes_pegas": "144/720",
+      "quadros_doentes_evento": "431/2160",
+      "quadros_sadios_evento": "161/900",
+      "escolhas_por_parte": [
+        {
+          "event_threshold": 0.95,
+          "min_event_tiles": 1
+        },
+        {
+          "event_threshold": 0.97,
+          "min_event_tiles": 1
+        },
+        {
+          "event_threshold": 0.97,
+          "min_event_tiles": 1
+        },
+        {
+          "event_threshold": 0.97,
+          "min_event_tiles": 1
+        },
+        {
+          "event_threshold": 0.97,
+          "min_event_tiles": 1
+        }
+      ]
+    },
+    "no_conjunto_inteiro": {
+      "plantas_doentes_pegas": 0.0,
+      "quadros_doentes_evento": 0.0,
+      "quadros_sadios_evento": 0.0,
+      "n_plantas_doentes": 720,
+      "n_quadros_sadios": 900
+    },
+    "evidencia_fora_da_amostra": {
+      "partes": 5,
+      "plantas_doentes_pegas": "640/720",
+      "quadros_doentes_evento": "1623/2160",
+      "quadros_sadios_evento": "103/900",
+      "escolhas_por_parte": [
+        {
+          "llr_clip": 3.0,
+          "tile_correlation": 1.0,
+          "event_evidence": -0.0606
+        },
+        {
+          "llr_clip": 1.0,
+          "tile_correlation": 1.0,
+          "event_evidence": -0.041
+        },
+        {
+          "llr_clip": 1.0,
+          "tile_correlation": 1.0,
+          "event_evidence": -0.0432
+        },
+        {
+          "llr_clip": 1.0,
+          "tile_correlation": 1.0,
+          "event_evidence": -0.0398
+        },
+        {
+          "llr_clip": 1.0,
+          "tile_correlation": 1.0,
+          "event_evidence": -0.0438
+        }
+      ],
+      "plantas_doentes_pegas_por_incidencia": {
+        "0.05": "160/240",
+        "0.1": "240/240",
+        "0.2": "240/240"
+      }
+    },
+    "plantas": {
+      "doentes": 720,
+      "sadias": 300
+    },
+    "dados": [
+      "/home/pedro/medicoes/edge/coffee-mosaico.jsonl"
+    ],
+    "data": "2026-10-07T15:41:26+00:00",
+    "limite": "fotos de folha agrupadas, não o Rover no pomar; validar em campo"
+  }
+}

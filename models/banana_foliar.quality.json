@@ -1,0 +1,10 @@
+{
+  "img_size": 224,
+  "min_sharpness": 34.144293215986536,
+  "min_brightness": 82.31475607994888,
+  "max_brightness": 184.47284838583167,
+  "min_contrast": 9.927405946464587,
+  "max_highlights": 0.07557617187500124,
+  "percentile": 0.5,
+  "fitted_on": 14752
+}

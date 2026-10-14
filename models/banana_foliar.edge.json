@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "crop": "banana",
+  "healthy_label": "Healthy",
+  "event_threshold": 0.99,
+  "min_event_tiles": 3,
+  "near_miss_threshold": 0.99,
+  "anomaly_mean_confidence_below": 0.609,
+  "tile_mm": 150.0,
+  "overlap": 0.25,
+  "hfov_deg": 127.0,
+  "vfov_deg": 110.0,
+  "default_distance_mm": 270.0,
+  "tile_batch": 32,
+  "tile_probabilities": "full",
+  "evidence": {
+    "bin_edges": [
+      0.0,
+      0.02,
+      0.05,
+      0.1,
+      0.2,
+      0.35,
+      0.5,
+      0.65,
+      0.8,
+      0.9,
+      0.95,
+      0.98,
+      0.99,
+      0.995,
+      0.999,
+      1.0
+    ],
+    "llr_tables": {
+      "Cordana": [
+        -0.92843,
+        0.08865,
+        0.1435,
+        0.04177,
+        0.16456,
+        0.23751,
+        0.1394,
+        0.22407,
+        0.33961,
+        0.39442,
+        0.50995,
+        0.56847,
+        0.70088,
+        0.78735,
+        1.3568
+      ],
+      "Fusarium_Wilt": [
+        -0.64037,
+        -0.00573,
+        0.24615,
+        0.55851,
+        0.8605,
+        1.08561,
+        1.29069,
+        1.55356,
+        2.1205,
+        2.29952,
+        2.68411,
+        2.97742,
+        3.3745,
+        3.65852,
+        5.21168
+      ],
+      "Pestalotiopsis": [
+        -0.01051,
+        0.71315,
+        0.92126,
+        0.66389,
+        1.37406,
+        1.53195,
+        1.46295,
+        1.76641,
+        1.72835,
+        1.56561,
+        1.51263,
+        1.35377,
+        1.3693,
+        1.21037,
+        1.41104
+      ],
+      "Sigatoka": [
+        -0.60148,
+        -0.04793,
+        0.01112,
+        0.05969,
+        0.23859,
+        0.27686,
+        0.42754,
+        0.63614,
+        1.03487,
+        1.28553,
+        1.63864,
+        1.98477,
+        2.70662,
+        3.19124,
+        4.27139
+      ]
+    },
+    "llr_clip": 2.0,
+    "tile_correlation": 1.0,
+    "event_evidence": 0.517527,
+    "near_miss_evidence": 0.385946
+  },
+  "measured": {
+    "orcamento_quadros_sadios": 0.05,
+    "fora_da_amostra": {
+      "partes": 5,
+      "plantas_doentes_pegas": "125/125",
+      "quadros_doentes_evento": "298/373",
+      "quadros_sadios_evento": "260/779",
+      "escolhas_por_parte": [
+        {
+          "event_threshold": 0.99,
+          "min_event_tiles": 3
+        },
+        {
+          "event_threshold": 0.99,
+          "min_event_tiles": 3
+        },
+        {
+          "event_threshold": 0.99,
+          "min_event_tiles": 3
+        },
+        {
+          "event_threshold": 0.99,
+          "min_event_tiles": 3
+        },
+        {
+          "event_threshold": 0.99,
+          "min_event_tiles": 3
+        }
+      ]
+    },
+    "no_conjunto_inteiro": {
+      "plantas_doentes_pegas": 1.0,
+      "quadros_doentes_evento": 0.7989,
+      "quadros_sadios_evento": 0.3338,
+      "n_plantas_doentes": 125,
+      "n_quadros_sadios": 779
+    },
+    "evidencia_fora_da_amostra": {
+      "partes": 5,
+      "plantas_doentes_pegas": "99/125",
+      "quadros_doentes_evento": "168/373",
+      "quadros_sadios_evento": "41/779",
+      "escolhas_por_parte": [
+        {
+          "llr_clip": 3.0,
+          "tile_correlation": 1.0,
+          "event_evidence": 0.5247
+        },
+        {
+          "llr_clip": 3.0,
+          "tile_correlation": 1.0,
+          "event_evidence": 0.5345
+        },
+        {
+          "llr_clip": 3.0,
+          "tile_correlation": 1.0,
+          "event_evidence": 0.5479
+        },
+        {
+          "llr_clip": 3.0,
+          "tile_correlation": 0.1,
+          "event_evidence": 4.6599
+        },
+        {
+          "llr_clip": 3.0,
+          "tile_correlation": 1.0,
+          "event_evidence": 0.4704
+        }
+      ]
+    },
+    "plantas": {
+      "doentes": 125,
+      "sadias": 283
+    },
+    "dados": [
+      "/home/pedro/medicoes/edge/banana.jsonl"
+    ],
+    "data": "2026-10-07T04:54:48+00:00",
+    "limite": "fotos de folha agrupadas, não o Rover no pomar; validar em campo"
+  }
+}

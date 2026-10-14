@@ -1,0 +1,223 @@
+{
+  "version": 1,
+  "created_at": "2026-10-07T15:32:45+00:00",
+  "calibration": {
+    "id": "coffee-foliar@20261007-ba6424a5",
+    "model_key": "coffee-foliar",
+    "crop": "coffee",
+    "bin_edges": [
+      0.0,
+      0.02,
+      0.05,
+      0.1,
+      0.2,
+      0.35,
+      0.5,
+      0.65,
+      0.8,
+      0.9,
+      0.95,
+      0.98,
+      1.0
+    ],
+    "llr_tables": {
+      "Cercospora_Leaf_Spot": [
+        -0.1122,
+        0.12477,
+        2.22936,
+        -4.50517,
+        -7.99905,
+        1.95749,
+        1.3134,
+        5.79077,
+        3.50165,
+        7.40685,
+        5.06107,
+        -6.47522
+      ],
+      "Leaf_Miner_Damage": [
+        -0.1157,
+        -0.10479,
+        -6.12423,
+        0.68495,
+        -0.47297,
+        2.45739,
+        3.79607,
+        2.25901,
+        1.16904,
+        3.59786,
+        5.67665,
+        -6.47522
+      ],
+      "Phoma_Leaf_Spot": [
+        -0.11701,
+        -0.17143,
+        -4.94422,
+        5.23257,
+        -6.21286,
+        6.23203,
+        2.06023,
+        0.77441,
+        1.98152,
+        2.81212,
+        9.78107,
+        -6.47522
+      ],
+      "Rust": [
+        -0.11816,
+        -0.16404,
+        -0.13634,
+        0.01102,
+        3.73785,
+        -0.25743,
+        5.15243,
+        0.00694,
+        -0.04856,
+        0.62614,
+        2.90663,
+        -6.47522
+      ]
+    },
+    "llr_clip": 3.0,
+    "tile_correlation": 0.7,
+    "evidence_offset": 1.9080941404198146,
+    "evidence_scale": 13.946475181607022,
+    "suspect_evidence": 1.5599137958436313,
+    "diseased_evidence": 2.9444389791664403,
+    "plant_sensitivity": 0.8763888888888889,
+    "plant_false_alarm": 0.04,
+    "n_diseased": 720,
+    "n_healthy": 300,
+    "sensitivity_n_eff": 49.54,
+    "false_alarm_n_eff": 24.0
+  },
+  "report": {
+    "avisos": [],
+    "validacao_cruzada": {
+      "partes": 10,
+      "doentes": 720,
+      "sadias": 300,
+      "detectadas": 631,
+      "detectadas_como_doente": 577,
+      "doenca_certa": 631,
+      "alarme_falso": 12,
+      "alarme_falso_doente": 0,
+      "revisar": 0,
+      "sinalizadas_por_classe": {
+        "Cercospora_Leaf_Spot": "161/180",
+        "Healthy": "12/300",
+        "Leaf_Miner_Damage": "157/180",
+        "Phoma_Leaf_Spot": "151/180",
+        "Rust": "162/180"
+      },
+      "sinalizadas_por_fonte": {
+        "doentes:dobra:0": "107/144",
+        "doentes:dobra:1": "113/144",
+        "doentes:dobra:2": "139/144",
+        "doentes:dobra:3": "138/144",
+        "doentes:dobra:4": "134/144",
+        "sadias:dobra:0": "0/60",
+        "sadias:dobra:1": "0/60",
+        "sadias:dobra:2": "12/60",
+        "sadias:dobra:3": "0/60",
+        "sadias:dobra:4": "0/60"
+      },
+      "escolhas_por_parte": [
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 2.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 2.0
+        },
+        {
+          "tile_correlation": 0.0,
+          "llr_clip": 3.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 3.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 3.0
+        },
+        {
+          "tile_correlation": 0.7,
+          "llr_clip": 3.0
+        },
+        {
+          "tile_correlation": 0.7,
+          "llr_clip": 3.0
+        },
+        {
+          "tile_correlation": 0.7,
+          "llr_clip": 3.0
+        },
+        {
+          "tile_correlation": 0.7,
+          "llr_clip": 3.0
+        },
+        {
+          "tile_correlation": 0.7,
+          "llr_clip": 3.0
+        }
+      ]
+    },
+    "sem_calibracao": {
+      "doentes": 720,
+      "sadias": 300,
+      "detectadas": 0,
+      "detectadas_como_doente": 0,
+      "doenca_certa": 0,
+      "alarme_falso": 0,
+      "alarme_falso_doente": 0,
+      "revisar": 0,
+      "sinalizadas_por_classe": {
+        "Cercospora_Leaf_Spot": "0/180",
+        "Healthy": "0/300",
+        "Leaf_Miner_Damage": "0/180",
+        "Phoma_Leaf_Spot": "0/180",
+        "Rust": "0/180"
+      },
+      "sinalizadas_por_fonte": {
+        "doentes:dobra:0": "0/144",
+        "doentes:dobra:1": "0/144",
+        "doentes:dobra:2": "0/144",
+        "doentes:dobra:3": "0/144",
+        "doentes:dobra:4": "0/144",
+        "sadias:dobra:0": "0/60",
+        "sadias:dobra:1": "0/60",
+        "sadias:dobra:2": "0/60",
+        "sadias:dobra:3": "0/60",
+        "sadias:dobra:4": "0/60"
+      }
+    },
+    "metas_de_alarme_falso": {
+      "suspeita_ou_doente": 0.05,
+      "doente": 0.02
+    },
+    "limiares_na_evidencia_crua": {
+      "suspeita": -0.024965472640382475,
+      "doente": 0.07430872856773046
+    },
+    "plantas_por_classe": {
+      "Cercospora_Leaf_Spot": 180,
+      "Healthy": 300,
+      "Leaf_Miner_Damage": 180,
+      "Phoma_Leaf_Spot": 180,
+      "Rust": 180
+    },
+    "plantas_por_fonte": {
+      "dobra:0": 204,
+      "dobra:1": 204,
+      "dobra:2": 204,
+      "dobra:3": 204,
+      "dobra:4": 204
+    },
+    "dados": [
+      "/home/pedro/valtexa/models/coffee_foliar.edge-fusion.frames.jsonl"
+    ]
+  }
+}

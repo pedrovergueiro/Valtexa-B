@@ -4,9 +4,12 @@ __pycache__/
 venv/
 .env
 
-# artefatos de treino (binarios grandes — distribuir fora do git)
-models/*
-!models/.gitkeep
+# artefatos de treino: os de produção vão no git por Git LFS (.gitattributes, models/README.md);
+# backups, candidatos antigos e quarentena continuam fora
+models/_backup-*/
+models/_candidatos-*/
+models/_quarentena/
+models/*.bak*
 
 # dataset
 data/*

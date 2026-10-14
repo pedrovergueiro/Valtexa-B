@@ -1,0 +1,309 @@
+{
+  "version": 1,
+  "crop": "citrus",
+  "healthy_label": "Healthy",
+  "event_threshold": 0.99,
+  "min_event_tiles": 3,
+  "near_miss_threshold": 0.99,
+  "anomaly_mean_confidence_below": 0.5829,
+  "tile_mm": 150.0,
+  "overlap": 0.25,
+  "hfov_deg": 127.0,
+  "vfov_deg": 110.0,
+  "default_distance_mm": 270.0,
+  "tile_batch": 32,
+  "tile_probabilities": "full",
+  "evidence": {
+    "bin_edges": [
+      0.0,
+      0.02,
+      0.05,
+      0.1,
+      0.2,
+      0.35,
+      0.5,
+      0.65,
+      0.8,
+      0.9,
+      0.95,
+      0.98,
+      0.99,
+      0.995,
+      0.999,
+      1.0
+    ],
+    "llr_tables": {
+      "Algal_Leaf_Spot": [
+        -2.32583,
+        2.20181,
+        2.66392,
+        3.15669,
+        3.52635,
+        4.09563,
+        4.43438,
+        4.58853,
+        5.43465,
+        5.31363,
+        6.69519,
+        6.22108,
+        7.27293,
+        7.07181,
+        7.75022
+      ],
+      "Anthracnose": [
+        -2.32783,
+        1.36743,
+        3.57148,
+        5.1026,
+        7.66949,
+        6.73469,
+        7.56987,
+        7.76658,
+        7.83254,
+        7.61621,
+        7.79381,
+        7.31969,
+        7.27293,
+        7.76496,
+        8.44336
+      ],
+      "Black_Spot": [
+        -2.3137,
+        1.15114,
+        2.00196,
+        2.96253,
+        3.73766,
+        4.132,
+        5.17198,
+        5.68714,
+        7.13939,
+        5.82445,
+        7.10066,
+        7.31969,
+        7.27293,
+        7.76496,
+        8.44336
+      ],
+      "Canker": [
+        -1.41255,
+        -0.51661,
+        -0.16639,
+        0.06089,
+        0.19396,
+        -1.48968,
+        0.39047,
+        0.65782,
+        0.94408,
+        0.8671,
+        1.11812,
+        1.23057,
+        1.56536,
+        2.0575,
+        3.96547
+      ],
+      "Curl_Leaf": [
+        -1.57295,
+        0.71029,
+        0.82365,
+        -1.01274,
+        0.87714,
+        0.84166,
+        0.80138,
+        0.59186,
+        0.53274,
+        0.4982,
+        0.42673,
+        0.14343,
+        0.48058,
+        1.28491,
+        3.9325
+      ],
+      "Greening": [
+        -0.75757,
+        -0.30496,
+        -0.23843,
+        -0.3851,
+        -1.11219,
+        0.00526,
+        0.37715,
+        0.50194,
+        0.6849,
+        0.86138,
+        1.12281,
+        1.27941,
+        1.57064,
+        1.85754,
+        2.32235
+      ],
+      "Leafminer": [
+        -2.13398,
+        0.24393,
+        -1.0985,
+        3.04421,
+        4.8969,
+        5.48193,
+        7.56987,
+        6.66797,
+        7.83254,
+        7.61621,
+        7.79381,
+        7.31969,
+        7.27293,
+        7.76496,
+        8.44336
+      ],
+      "Melanose": [
+        -2.31925,
+        1.35773,
+        2.30025,
+        3.09887,
+        3.84084,
+        4.29234,
+        5.26729,
+        6.15715,
+        6.44625,
+        6.92307,
+        7.79381,
+        7.31969,
+        7.27293,
+        7.76496,
+        8.44336
+      ],
+      "Mites": [
+        -2.32598,
+        1.94987,
+        2.71799,
+        3.1216,
+        3.6805,
+        4.29234,
+        5.00492,
+        5.464,
+        5.63532,
+        7.61621,
+        6.69519,
+        7.31969,
+        7.27293,
+        7.76496,
+        8.44336
+      ],
+      "Scab": [
+        -2.32269,
+        2.17411,
+        2.69059,
+        3.29704,
+        3.47983,
+        3.66664,
+        4.23767,
+        4.3326,
+        4.78802,
+        4.67177,
+        4.65831,
+        4.92179,
+        5.0757,
+        5.1259,
+        5.61015
+      ],
+      "Sooty_Mold": [
+        -2.31851,
+        1.7488,
+        2.50228,
+        2.97238,
+        3.20358,
+        3.51581,
+        3.98635,
+        4.50849,
+        4.57445,
+        4.97716,
+        4.96059,
+        5.71025,
+        5.88663,
+        6.66635,
+        7.34475
+      ]
+    },
+    "llr_clip": 2.0,
+    "tile_correlation": 1.0,
+    "event_evidence": 0.342857,
+    "near_miss_evidence": 0.266187
+  },
+  "measured": {
+    "orcamento_quadros_sadios": 0.05,
+    "fora_da_amostra": {
+      "partes": 5,
+      "plantas_doentes_pegas": "33/33",
+      "quadros_doentes_evento": "98/98",
+      "quadros_sadios_evento": "165/249",
+      "escolhas_por_parte": [
+        {
+          "event_threshold": 0.99,
+          "min_event_tiles": 3
+        },
+        {
+          "event_threshold": 0.99,
+          "min_event_tiles": 3
+        },
+        {
+          "event_threshold": 0.99,
+          "min_event_tiles": 3
+        },
+        {
+          "event_threshold": 0.99,
+          "min_event_tiles": 3
+        },
+        {
+          "event_threshold": 0.99,
+          "min_event_tiles": 3
+        }
+      ]
+    },
+    "no_conjunto_inteiro": {
+      "plantas_doentes_pegas": 1.0,
+      "quadros_doentes_evento": 1.0,
+      "quadros_sadios_evento": 0.6627,
+      "n_plantas_doentes": 33,
+      "n_quadros_sadios": 249
+    },
+    "evidencia_fora_da_amostra": {
+      "partes": 5,
+      "plantas_doentes_pegas": "33/33",
+      "quadros_doentes_evento": "84/98",
+      "quadros_sadios_evento": "15/249",
+      "escolhas_por_parte": [
+        {
+          "llr_clip": 3.0,
+          "tile_correlation": 1.0,
+          "event_evidence": 0.3816
+        },
+        {
+          "llr_clip": 3.0,
+          "tile_correlation": 1.0,
+          "event_evidence": 0.3507
+        },
+        {
+          "llr_clip": 2.0,
+          "tile_correlation": 1.0,
+          "event_evidence": 0.3113
+        },
+        {
+          "llr_clip": 3.0,
+          "tile_correlation": 1.0,
+          "event_evidence": 0.398
+        },
+        {
+          "llr_clip": 2.0,
+          "tile_correlation": 1.0,
+          "event_evidence": 0.3777
+        }
+      ]
+    },
+    "plantas": {
+      "doentes": 33,
+      "sadias": 83
+    },
+    "dados": [
+      "/home/pedro/medicoes/edge/citrus.jsonl"
+    ],
+    "data": "2026-10-07T05:04:42+00:00",
+    "limite": "fotos de folha agrupadas, não o Rover no pomar; validar em campo"
+  }
+}

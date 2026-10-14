@@ -1,0 +1,10 @@
+{
+  "data_dir": "/home/pedro/valtexa/data/banana-foliar-campo",
+  "prior": {
+    "Cordana": 0.02158468463582624,
+    "Fusarium_Wilt": 0.2690492976842562,
+    "Healthy": 0.31465914637453224,
+    "Pestalotiopsis": 0.009328054666738977,
+    "Sigatoka": 0.38537881663864637
+  }
+}

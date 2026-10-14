@@ -1,0 +1,7 @@
+{
+  "Cercospora_Leaf_Spot": "POSSIVEL_DOENCA",
+  "Healthy": "NORMAL",
+  "Leaf_Miner_Damage": "POSSIVEL_PRAGA",
+  "Phoma_Leaf_Spot": "POSSIVEL_DOENCA",
+  "Rust": "POSSIVEL_DOENCA"
+}

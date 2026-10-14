@@ -1,0 +1,7 @@
+{
+  "Cordana": "POSSIVEL_DOENCA",
+  "Fusarium_Wilt": "POSSIVEL_DOENCA",
+  "Healthy": "NORMAL",
+  "Pestalotiopsis": "POSSIVEL_PRAGA",
+  "Sigatoka": "POSSIVEL_DOENCA"
+}

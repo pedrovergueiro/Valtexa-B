@@ -1,0 +1,48 @@
+{
+  "com_lesao": {
+    "n": 82,
+    "dice_medio": 0.6801,
+    "iou_medio": 0.5578,
+    "fracao_real_media": 0.2865,
+    "fracao_estimada_media": 0.2537,
+    "erro_absoluto_medio": 0.0756,
+    "erro_absoluto_p90": 0.227,
+    "correlacao": 0.8926
+  },
+  "corn_rust": {
+    "n": 35,
+    "dice_medio": 0.8012,
+    "iou_medio": 0.6938,
+    "fracao_real_media": 0.3933,
+    "fracao_estimada_media": 0.3713,
+    "erro_absoluto_medio": 0.0712,
+    "erro_absoluto_p90": 0.2257,
+    "correlacao": 0.9004
+  },
+  "corn_gray_leaf_spot": {
+    "n": 21,
+    "dice_medio": 0.6497,
+    "iou_medio": 0.5045,
+    "fracao_real_media": 0.3069,
+    "fracao_estimada_media": 0.2403,
+    "erro_absoluto_medio": 0.1177,
+    "erro_absoluto_p90": 0.3324,
+    "correlacao": 0.8467
+  },
+  "corn_northern_leaf_blight": {
+    "n": 26,
+    "dice_medio": 0.5416,
+    "iou_medio": 0.4179,
+    "fracao_real_media": 0.1262,
+    "fracao_estimada_media": 0.1063,
+    "erro_absoluto_medio": 0.0476,
+    "erro_absoluto_p90": 0.101,
+    "correlacao": 0.7923
+  },
+  "saudaveis": {
+    "n": 80,
+    "lesao_falsa_media": 0.0001,
+    "lesao_falsa_p95": 0.0,
+    "com_mais_de_5pct": 0.0
+  }
+}

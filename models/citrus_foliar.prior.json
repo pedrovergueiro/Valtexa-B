@@ -1,0 +1,17 @@
+{
+  "data_dir": "/home/pedro/valtexa/data/citrus-foliar-campo",
+  "prior": {
+    "Algal_Leaf_Spot": 0.023350253807106598,
+    "Anthracnose": 0.05547498187092096,
+    "Black_Spot": 0.02755620014503263,
+    "Canker": 0.23009427121102247,
+    "Curl_Leaf": 0.09833212472806381,
+    "Greening": 0.19630166787527192,
+    "Healthy": 0.12501812907904278,
+    "Leafminer": 0.05620014503263234,
+    "Melanose": 0.013633067440174038,
+    "Mites": 0.048513415518491664,
+    "Scab": 0.010297316896301667,
+    "Sooty_Mold": 0.11522842639593908
+  }
+}

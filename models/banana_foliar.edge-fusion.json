@@ -1,0 +1,206 @@
+{
+  "version": 1,
+  "created_at": "2026-10-07T04:51:05+00:00",
+  "calibration": {
+    "id": "banana-foliar@20261007-df3b4c96",
+    "model_key": "banana-foliar",
+    "crop": "banana",
+    "bin_edges": [
+      0.0,
+      0.02,
+      0.05,
+      0.1,
+      0.2,
+      0.35,
+      0.5,
+      0.65,
+      0.8,
+      0.9,
+      0.95,
+      0.98,
+      1.0
+    ],
+    "llr_tables": {
+      "Cordana": [
+        -0.92845,
+        0.08862,
+        0.14347,
+        0.04175,
+        0.16454,
+        0.23749,
+        0.13938,
+        0.22404,
+        0.33959,
+        0.39439,
+        0.50993,
+        0.87202
+      ],
+      "Fusarium_Wilt": [
+        -0.6404,
+        -0.00576,
+        0.24612,
+        0.55849,
+        0.86047,
+        1.08558,
+        1.29066,
+        1.55354,
+        2.12047,
+        2.29949,
+        2.68409,
+        3.52943
+      ],
+      "Pestalotiopsis": [
+        -0.01054,
+        0.71315,
+        0.92127,
+        0.66394,
+        1.37411,
+        1.532,
+        1.46301,
+        1.76646,
+        1.72841,
+        1.56566,
+        1.51269,
+        1.41977
+      ],
+      "Sigatoka": [
+        -0.60151,
+        -0.04796,
+        0.01109,
+        0.05966,
+        0.23856,
+        0.27683,
+        0.42752,
+        0.63611,
+        1.03485,
+        1.2855,
+        1.63861,
+        2.61458
+      ]
+    },
+    "llr_clip": 1.0,
+    "tile_correlation": 1.0,
+    "evidence_offset": -0.011500634824792133,
+    "evidence_scale": 2.538095187225748,
+    "suspect_evidence": 0.7608529211398077,
+    "diseased_evidence": 2.9444389791664403,
+    "plant_sensitivity": 0.904,
+    "plant_false_alarm": 0.053003533568904596,
+    "n_diseased": 125,
+    "n_healthy": 283,
+    "sensitivity_n_eff": 100.67,
+    "false_alarm_n_eff": 283.0
+  },
+  "report": {
+    "avisos": [],
+    "validacao_cruzada": {
+      "partes": 10,
+      "doentes": 125,
+      "sadias": 283,
+      "detectadas": 113,
+      "detectadas_como_doente": 29,
+      "doenca_certa": 62,
+      "alarme_falso": 15,
+      "alarme_falso_doente": 0,
+      "revisar": 0,
+      "sinalizadas_por_classe": {
+        "Cordana": "18/20",
+        "Fusarium_Wilt": "40/44",
+        "Healthy": "15/283",
+        "Pestalotiopsis": "10/10",
+        "Sigatoka": "45/51"
+      },
+      "sinalizadas_por_fonte": {
+        "doentes:campo": "96/107",
+        "doentes:plantseg": "17/18",
+        "sadias:campo": "15/283"
+      },
+      "escolhas_por_parte": [
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 1.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 1.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 1.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 1.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 1.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 3.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 3.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 1.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 1.0
+        },
+        {
+          "tile_correlation": 0.1,
+          "llr_clip": 3.0
+        }
+      ]
+    },
+    "sem_calibracao": {
+      "doentes": 125,
+      "sadias": 283,
+      "detectadas": 66,
+      "detectadas_como_doente": 18,
+      "doenca_certa": 20,
+      "alarme_falso": 15,
+      "alarme_falso_doente": 1,
+      "revisar": 0,
+      "sinalizadas_por_classe": {
+        "Cordana": "15/20",
+        "Fusarium_Wilt": "20/44",
+        "Healthy": "15/283",
+        "Pestalotiopsis": "9/10",
+        "Sigatoka": "22/51"
+      },
+      "sinalizadas_por_fonte": {
+        "doentes:campo": "57/107",
+        "doentes:plantseg": "9/18",
+        "sadias:campo": "15/283"
+      }
+    },
+    "metas_de_alarme_falso": {
+      "suspeita_ou_doente": 0.05,
+      "doente": 0.02
+    },
+    "limiares_na_evidencia_crua": {
+      "suspeita": 0.30430440901186884,
+      "doente": 1.1646291395486263
+    },
+    "plantas_por_classe": {
+      "Cordana": 20,
+      "Fusarium_Wilt": 44,
+      "Healthy": 283,
+      "Pestalotiopsis": 10,
+      "Sigatoka": 51
+    },
+    "plantas_por_fonte": {
+      "campo": 390,
+      "plantseg": 18
+    },
+    "dados": [
+      "/home/pedro/valtexa/models/banana_foliar.edge-fusion.frames.jsonl"
+    ]
+  }
+}

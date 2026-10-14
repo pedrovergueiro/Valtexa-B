@@ -1,0 +1,14 @@
+{
+  "Algal_Leaf_Spot": "POSSIVEL_DOENCA",
+  "Anthracnose": "POSSIVEL_DOENCA",
+  "Black_Spot": "POSSIVEL_DOENCA",
+  "Canker": "POSSIVEL_DOENCA",
+  "Curl_Leaf": "POSSIVEL_DOENCA",
+  "Greening": "POSSIVEL_DOENCA",
+  "Healthy": "NORMAL",
+  "Leafminer": "POSSIVEL_PRAGA",
+  "Melanose": "POSSIVEL_DOENCA",
+  "Mites": "POSSIVEL_PRAGA",
+  "Scab": "POSSIVEL_DOENCA",
+  "Sooty_Mold": "POSSIVEL_DOENCA"
+}

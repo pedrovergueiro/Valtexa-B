@@ -1,0 +1,299 @@
+{
+  "version": 1,
+  "created_at": "2026-10-07T05:04:46+00:00",
+  "calibration": {
+    "id": "citrus-foliar@20261007-e6602f6e",
+    "model_key": "citrus-foliar",
+    "crop": "citrus",
+    "bin_edges": [
+      0.0,
+      0.02,
+      0.05,
+      0.1,
+      0.2,
+      0.35,
+      0.5,
+      0.65,
+      0.8,
+      0.9,
+      0.95,
+      0.98,
+      1.0
+    ],
+    "llr_tables": {
+      "Algal_Leaf_Spot": [
+        -2.32557,
+        2.20206,
+        2.66418,
+        3.15694,
+        3.52661,
+        4.09589,
+        4.43463,
+        4.58878,
+        5.4349,
+        5.31388,
+        6.69545,
+        7.59511
+      ],
+      "Anthracnose": [
+        -2.32757,
+        1.36769,
+        3.57173,
+        5.10285,
+        7.66974,
+        6.73494,
+        7.57013,
+        7.76684,
+        7.8328,
+        7.61647,
+        7.79406,
+        9.20455
+      ],
+      "Black_Spot": [
+        -2.31345,
+        1.1514,
+        2.00221,
+        2.96278,
+        3.73791,
+        4.13225,
+        5.17223,
+        5.6874,
+        7.13965,
+        5.82471,
+        7.10091,
+        9.20455
+      ],
+      "Canker": [
+        -1.41266,
+        -0.51672,
+        -0.1665,
+        0.06078,
+        0.19385,
+        -1.48979,
+        0.39036,
+        0.65771,
+        0.94397,
+        0.86699,
+        1.11801,
+        2.22378
+      ],
+      "Curl_Leaf": [
+        -1.5727,
+        0.71055,
+        0.8239,
+        -1.01249,
+        0.8774,
+        0.84192,
+        0.80163,
+        0.59211,
+        0.533,
+        0.49845,
+        0.42698,
+        1.21872
+      ],
+      "Greening": [
+        -0.75765,
+        -0.30505,
+        -0.23851,
+        -0.38518,
+        -1.11228,
+        0.00517,
+        0.37707,
+        0.50186,
+        0.68481,
+        0.86129,
+        1.12272,
+        1.78171
+      ],
+      "Leafminer": [
+        -2.13372,
+        0.24418,
+        -1.09825,
+        3.04446,
+        4.89715,
+        5.48218,
+        7.57013,
+        6.66823,
+        7.8328,
+        7.61647,
+        7.79406,
+        9.20455
+      ],
+      "Melanose": [
+        -2.31899,
+        1.35798,
+        2.30051,
+        3.09912,
+        3.8411,
+        4.2926,
+        5.26754,
+        6.1574,
+        6.4465,
+        6.92332,
+        7.79406,
+        9.20455
+      ],
+      "Mites": [
+        -2.32572,
+        1.95012,
+        2.71824,
+        3.12185,
+        3.68076,
+        4.2926,
+        5.00518,
+        5.46425,
+        5.63557,
+        7.61647,
+        6.69545,
+        9.20455
+      ],
+      "Scab": [
+        -2.32244,
+        2.17436,
+        2.69084,
+        3.2973,
+        3.48009,
+        3.66689,
+        4.23792,
+        4.33285,
+        4.78827,
+        4.67203,
+        4.65857,
+        5.33335
+      ],
+      "Sooty_Mold": [
+        -2.31826,
+        1.74906,
+        2.50253,
+        2.97264,
+        3.20383,
+        3.51607,
+        3.98661,
+        4.50874,
+        4.5747,
+        4.97741,
+        4.96085,
+        6.71964
+      ]
+    },
+    "llr_clip": 3.0,
+    "tile_correlation": 1.0,
+    "evidence_offset": -0.7213279687515373,
+    "evidence_scale": 4.396743370138011,
+    "suspect_evidence": 1.8888678268839199,
+    "diseased_evidence": 4.15001642932291,
+    "plant_sensitivity": 0.9696969696969697,
+    "plant_false_alarm": 0.04819277108433735,
+    "n_diseased": 33,
+    "n_healthy": 83,
+    "sensitivity_n_eff": 33.0,
+    "false_alarm_n_eff": 61.49
+  },
+  "report": {
+    "avisos": [
+      "Só 83 plantas sadias: o limiar de alarme falso e a taxa medida ficam instáveis (no citros, com 83 e sem o piso nos limiares, o alarme falso real variou de 0 a 17% entre metades sorteadas). A incidência corrigida é indicação até juntar mais sadias.",
+      "Só 33 plantas doentes: a sensibilidade por planta e as tabelas das doenças sem planta rotulada (que herdam a distribuição das outras) são frágeis."
+    ],
+    "validacao_cruzada": {
+      "partes": 10,
+      "doentes": 33,
+      "sadias": 83,
+      "detectadas": 32,
+      "detectadas_como_doente": 29,
+      "doenca_certa": 31,
+      "alarme_falso": 4,
+      "alarme_falso_doente": 2,
+      "revisar": 0,
+      "sinalizadas_por_classe": {
+        "Canker": "25/25",
+        "Greening": "7/8",
+        "Healthy": "4/83"
+      },
+      "sinalizadas_por_fonte": {
+        "doentes:plantseg": "32/33",
+        "sadias:campo": "4/83"
+      },
+      "escolhas_por_parte": [
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 3.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 3.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 2.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 2.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 3.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 3.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 3.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 3.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 3.0
+        },
+        {
+          "tile_correlation": 1.0,
+          "llr_clip": 3.0
+        }
+      ]
+    },
+    "sem_calibracao": {
+      "doentes": 33,
+      "sadias": 83,
+      "detectadas": 29,
+      "detectadas_como_doente": 12,
+      "doenca_certa": 28,
+      "alarme_falso": 18,
+      "alarme_falso_doente": 4,
+      "revisar": 0,
+      "sinalizadas_por_classe": {
+        "Canker": "25/25",
+        "Greening": "4/8",
+        "Healthy": "18/83"
+      },
+      "sinalizadas_por_fonte": {
+        "doentes:plantseg": "29/33",
+        "sadias:campo": "18/83"
+      }
+    },
+    "metas_de_alarme_falso": {
+      "suspeita_ou_doente": 0.05,
+      "doente": 0.02
+    },
+    "limiares_na_evidencia_crua": {
+      "suspeita": 0.5936657148023459,
+      "doente": 1.1079437638229812
+    },
+    "plantas_por_classe": {
+      "Canker": 25,
+      "Greening": 8,
+      "Healthy": 83
+    },
+    "plantas_por_fonte": {
+      "campo": 83,
+      "plantseg": 33
+    },
+    "dados": [
+      "/home/pedro/valtexa/models/citrus_foliar.edge-fusion.frames.jsonl"
+    ]
+  }
+}
