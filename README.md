@@ -28,6 +28,13 @@ O `rover-understory` está em `models/_quarentena/`: ele marcou 1,0000 no teste
 porque aprendeu a **sessão de fotografia**, não a doença — uma regressão
 logística que lê apenas a cor média da imagem também acerta 100%.
 
+**Sistema inteiro** (como esta IA conversa com a plataforma e o Rover, componentes,
+decisões, estado): `VALTEXA-SAAS/docs/ARCHITECTURE.md`, `COMPONENTS.md`, `DECISIONS.md` e
+`ESTADO_ATUAL.md`. **Testes**: rodam no WSL (no Windows o App Control bloqueia a DLL do
+ONNX) com `pytest` e `ruff check .` (ruff **0.6.9**, fixado em `requirements-dev.txt`);
+cada teste começa com uma pasta de modelos vazia (`tests/conftest.py`), então a suíte não
+depende dos pesos de `models/`.
+
 ## Estrutura
 
 ```
@@ -308,10 +315,19 @@ enquanto os outros dois ainda estão em coleta.
 | `GET` | `/fields/{talhão}/plants` | Diagnóstico fundido de cada planta. |
 | `GET` | `/fields/{talhão}/map` | Mapa do talhão em GeoJSON. |
 | `GET` | `/fields/{talhão}/plants/{planta}/evolution` | Histórico da planta entre passadas, com AUDPC. |
+| `GET` | `/fields/{talhão}/plants/{planta}/lesoes` | As lesões no referencial da planta (ao longo, altura, dentro da copa, inclinação), reencontradas entre passadas: `nova`, `persistente`, `nao_revista`. Precisa da geometria 3D do Rover. |
 | `POST` | `/fields/{talhão}/passes/{passada}/close` | Fecha a passada: o que mudou desde a anterior. |
 | `POST` | `/fields/{talhão}/frames?model=` | Quadro **já classificado no Rover** (probabilidades de cada recorte) entra na fusão, com a calibração da borda (`<pesos>.edge-fusion.json`); reenvio do mesmo `frame_id` não soma. |
 | `GET` | `/fields/{talhão}/incidence` | Fração de **plantas** doentes, com intervalo de 95% — ver [incidência](#incidência-do-talhão). |
 | `GET` | `/fields/{talhão}/prevalence` | Proporção de cada classe nos recortes, estimada sem rótulo, e a incidência por planta. |
+| `GET`/`POST` | `/fields/{talhão}/clima` | A série climática do talhão (estação, Open-Meteo, climatologia) — ver [gêmeo digital](#gêmeo-digital-do-talhão). |
+| `GET` | `/fields/{talhão}/gemeo` | O grafo do talhão e os modelos epidemiológicos ajustados. |
+| `POST` | `/fields/{talhão}/gemeo/ajuste?doenca=` | Ajusta o modelo epidemiológico às passadas fechadas e treina a rede residual (com portão). Com `dispersao=true&azimute_rua_graus=`, escolhe também a parte do contágio que vai pelo vento (`app/gemeo/dispersao.py`; desligada por padrão). |
+| `GET` | `/fields/{talhão}/gemeo/previsao?doenca=` | Risco por planta no horizonte (inclui o latente), janelas de infecção, focos de agora e previstos. |
+| `POST` | `/fields/{talhão}/gemeo/prescricao` | Prescrição sobre o risco previsto, com a data de aplicação e os cenários. |
+| `POST` | `/fields/{talhão}/gemeo/aplicacao-localizada` | Prescrição variável preditiva: mapa de risco por trecho de rua, taxa por trecho dentro da bula, ciclo de PWM por bico dentro da máquina, verificações determinísticas e o `sha256` do mapa (o SaaS prende a aprovação a ele). Proposta. |
+| `GET` | `/fields/{talhão}/gemeo/prioridades?doenca=&canal=` | Onde vale olhar: trechos de rua (Rover) ou blocos (drone) pelo valor da informação — ver [o gêmeo no enxame](MODELS.md#enxame). |
+| `POST` | `/fields/{talhão}/gemeo/observacoes` | Evidência por planta de outra fonte (drone, agrônomo), com o canal dela. O Rover não entra por aqui. |
 | `GET` | `/review/stats` | Tamanho da fila de revisão. |
 | `GET` | `/review` | Imagens aguardando diagnóstico, com o palpite do modelo. `?order=valor` põe primeiro o que mais ensina. |
 | `GET` | `/review/{id}/image` | A foto de um item da fila. |
@@ -487,6 +503,7 @@ Todas opcionais, via `.env` (ver `.env.example`).
 | `MAX_BATCH_SIZE` | `20` | Imagens por requisição em `/predict/batch`. |
 | `CORS_ORIGINS` | `localhost:5173,localhost:3000` | Origens do front, separadas por vírgula. |
 | `LOG_LEVEL` | `INFO` | Nível de log. |
+| `CLIMA_OPEN_METEO` | `false` | Deixa o gêmeo buscar histórico e previsão de tempo no Open-Meteo (`POST /fields/{id}/clima` com `buscar_open_meteo`). Desligado, a API não chama nada de fora: o tempo vem da estação. |
 
 Com `CORS_ORIGINS=*` as credenciais de CORS são desativadas automaticamente — a
 combinação `*` + credenciais é inválida por spec e, na prática, liberaria
@@ -1362,6 +1379,38 @@ treinadas só com dados CC BY ficam em `models/` com o sufixo `_anterior` (banan
 e `_papel` (citros).
 
 <a id="servindo-sem-torch-onnx-runtime"></a>
+## Gêmeo digital do talhão
+
+O resto do sistema responde *o que a planta tem hoje*. O gêmeo (`app/gemeo/`) responde *onde
+a doença vai estar*, com o tempo da fazenda, e o que fazer antes de ela chegar:
+
+| módulo | o que faz |
+| --- | --- |
+| `grafo` | As plantas da fusão viram nós; arestas ligam cada pé às vizinhas na rua (até 12 m) e nas duas ruas de cada lado. Uma camada por passada fechada, com a posterior por planta **sem** o carregamento temporal da fusão (`PlantFusionStore.pass_observations`). |
+| `clima` | O tempo dia a dia: estação (registros horários), Open-Meteo (com `CLIMA_OPEN_METEO`), climatologia além da previsão. Sem sensor de molhamento, hora com UR ≥ 90% ou chuva conta como folha molhada. |
+| `epidemia` | SEIR por planta (probabilidade de cada estado), passo diário: temperatura (Yan & Hunt), molhamento, chuva, latência que encurta no calor, núcleo de contágio anisotrópico (o mesmo da prescrição). Presets qualitativos para ferrugem, cercosporiose, phoma e bicho-mineiro. A passada entra por **Bayes exato por planta**, com a razão de verossimilhança da fusão. |
+| `ajuste` | MAP de β, alcances, fundo, alarme falso e sensibilidade sobre a previsão um passo à frente (Nelder-Mead + Levenberg-Marquardt, sem SciPy), incerteza de Laplace. |
+| `rede` | Rede residual espaço-temporal (uma camada de mensagem pelo grafo) sobre o logit da física. Só é usada se ganhar da física na passada que não viu. |
+| `previsao` | Conjunto (parâmetros de Laplace × tempo perturbado conforme a fonte): risco por planta com faixa, janelas de infecção, focos de agora e do horizonte. |
+| `prescricao_risco` | A prescrição de sempre sobre o risco previsto, com os alcances ajustados, a data (véspera da janela de infecção) e os cenários no gêmeo. |
+| `prioridade` | Onde vale olhar: o valor da informação da decisão tratar / não tratar, por trecho de rua ou bloco, para o enxame (`VALTEXA-SAAS/docs/ENXAME.md`) alocar. |
+
+Uso, num talhão com passadas fechadas:
+
+```bash
+curl -X POST localhost:8000/fields/T01/clima -H 'content-type: application/json' \
+     -d '{"registros_horarios": [{"time": "2026-03-01T00:00:00-03:00", "temperatura_c": 19.5, "ur": 93, "chuva_mm": 0}]}'
+curl -X POST 'localhost:8000/fields/T01/gemeo/ajuste?doenca=Rust'
+curl 'localhost:8000/fields/T01/gemeo/previsao?doenca=Rust&horizonte_dias=21'
+```
+
+**O que está medido e o que não está.** Tudo foi medido num talhão **sintético** onde a
+verdade é conhecida (`python -m training.mede_gemeo`): epidemia estocástica planta a planta,
+cobertura parcial, fusão calibrada. Não há medição em lavoura real ainda — os parâmetros
+biológicos dos presets são faixas da literatura, a revisar com o agrônomo, e o piloto é que
+vai dizer quanto o gêmeo acerta no campo. Os números e os limites estão em
+[`MODELS.md`](MODELS.md#gemeo).
+
 ## Servindo sem torch: ONNX Runtime
 
 O `.keras` precisa do Keras e de um backend inteiro — o torch com CUDA passa de
@@ -1523,6 +1572,111 @@ A consequência prática é uma regra de operação, não um parâmetro:
 > modelos de *enquadramento*, e exigem a folha preenchendo o quadro. Triagem de
 > dossel é o papel do `aerial-canopy`, que ainda precisa de coleta — enquanto
 > ele não existir, essa validação tem de ser feita por quem chama a API.
+
+## Aprendizado contínuo no campo
+
+A cabeça de diagnóstico (a leitura sobre o embedding do SigLIP 2 — no café, a resposta
+inteira) aprende com o que o agrônomo valida no campo, **sem esquecer o que já sabia**. A
+torre e a CNN ficam congeladas; o treino é NumPy, na CPU, em segundos por rodada.
+O porquê de cada peça está em [`app/inference/continual.py`](app/inference/continual.py).
+
+```
+validação do agrônomo (plataforma) → training.import_campo → recortes confirmados
+        ↓
+training.adapt_campo adapta    replay (memória por origem) + destilação + âncora L2-SP
+        ↓                      época escolhida na validação que a cabeça nunca treinou
+portão de regressão            conjuntos congelados, comparação pareada (bootstrap)
+        ↓ APROVADA
+training.adapt_campo promove   instala, arquiva a anterior, carimba o perfil do Rover
+        ↓
+training.adapt_campo monitora  a cada lote novo do agrônomo; reverte se piorou
+```
+
+```bash
+python -m training.adapt_campo memoria --model coffee-foliar --extra data/coffee-bracol \
+    --externo ~/valtexa-raw/coffee-leaves-disease            # uma vez por modelo
+python -m training.adapt_campo adapta --model coffee-foliar --campo data/coffee-campo \
+    --escopo fazenda-boa-vista                               # sai 0 (APROVADA) ou 2
+python -m training.adapt_campo promove --model coffee-foliar --rodada <rodada>     --aprovador "Eng. Agr. Fulana (CREA 0000)"               # grava a procedência
+python -m training.adapt_campo monitora --model coffee-foliar --campo data/coffee-campo-novo
+python -m training.adapt_campo reverte --model coffee-foliar
+python -m training.adapt_campo esquece --model coffee-foliar --fonte campo_T01   # LGPD
+python -m training.adapt_campo historico --model coffee-foliar
+curl localhost:8000/models/coffee-foliar/continuo            # o mesmo histórico, pela API
+```
+
+**O portão.** A candidata só substitui a cabeça em produção se: no agregado dos conjuntos
+congelados, o limite inferior do IC de 95% da diferença de acurácia balanceada fica acima
+de −2 pontos (não-inferioridade: o ônus da prova é dela); nenhum conjunto tem piora
+demonstrada; nenhuma classe perde mais de 5 pontos nem tem piora demonstrada; o alarme falso
+em folha sadia não sobe mais de 2 pontos — no café, o erro que mais custa; e ela **ganha**
+no teste do campo. O teste de cada rodada aprovada vira conjunto congelado: a rodada seguinte
+não pode esquecê-lo. O laudo (`models/_continuo/<pesos>/rodadas/<rodada>/laudo.md`) mostra
+conjunto a conjunto, com os intervalos.
+
+**Medido em 15/10/2026** (embeddings reais; cabeça de partida treinada só no
+`coffee-foliar`; o BRACOL fazendo o papel de uma fazenda nova, chegando em 3 rodadas de
+~197 folhas; teste final de 336 folhas do BRACOL que ninguém viu; 3 sementes; média ±
+desvio do estado final):
+
+| | café, teste isolado | alarme falso em sadia (café) | BRACOL, teste final | alarme falso em sadia (BRACOL) | externo (só mede) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| cabeça de partida | 96,8% | 2,6% | 30,0% | 100% | 16,5% |
+| ajuste ingênuo, promovido à força | **81,3%** ± 3,0 | 3,2% | 85,0% | 0% | 86,1% |
+| **adapt_campo (portão decide)** | **96,7%** ± 0,3 | **1,2%** ± 0,4 | **84,7%** ± 1,5 | **0%** | **84,1%** ± 3,5 |
+
+* O ajuste ingênuo aprende a fazenda nova e **esquece o café** (Cercospora perde até 57
+  pontos); o portão recusou 9 de 9 rodadas ingênuas, com piora demonstrada.
+* Com rótulos ruins (40% trocados — validação malfeita), o portão recusou 3 de 3.
+* O portão é rigoroso: aprovou 4 de 9 rodadas boas. Das 5 recusadas, em 2 nenhuma época
+  melhorava o campo sem piorar o que já se sabia — a cabeça volta intacta ("sem ganho"); nas
+  outras 3 o custo era pequeno e real (ferrugem com piora demonstrada de 3,8 e 4,6 pontos;
+  alarme falso em sadia +2,5 pontos). Para comparação, a cabeça **treinada de uma vez** com
+  café + BRACOL — a que está em produção — sobe o alarme falso no café de 2,6% para 5,2%:
+  aprender o BRACOL tem esse custo por natureza do dado, e o aprendizado contínuo com portão
+  terminou em 1,2%.
+
+O que **não** foi medido: recortes do Rover num cafezal (não existem ainda — o BRACOL são
+folhas inteiras fotografadas); a primeira rodada de verdade é com a validação de campo
+(ROVER_RUNTIME §17, `import_campo`). Reproduzir: `python -m training.mede_continuo`.
+
+**Depois de promover**: a cabeça nova muda as probabilidades. O `promove` carimba o perfil
+da borda instalado (`.edge.json`, `head.head_sha256`): se a evidência nas folhas sadias se
+move mais que meia faixa entre quase-evento e evento, o perfil fica preso à cabeça anterior
+e **o Rover recusa a nova** até o `fit_edge` recalibrar; senão, o perfil passa a valer para
+a nova. O conformal da API (`fit_conformal`) precisa ser recalibrado sempre — o `promove`
+lista as pendências.
+
+**Que tipo de atualização é.** Cada mudança mexe numa coisa e invalida coisas diferentes
+([`app/inference/atualizacao.py`](app/inference/atualizacao.py)); o `adapta` classifica a
+candidata contra a instalada **pela forma**, não pelo comando que a gerou, e registra no
+laudo o que ela exige e invalida:
+
+| tipo | o que muda | o ciclo contínuo pode? | invalida |
+| --- | --- | :---: | --- |
+| `cabeca` | os pesos da cabeça, mesma forma | sim | conformal; perfil da borda se a deriva passar da folga |
+| `estrutura` | neurônios, camadas, atalhos, ativações | não (treino novo) | conformal, perfil da borda sempre, logits da memória |
+| `embedding` | a torre de visão | não | tudo: cabeças, memória, regressão, régua, conformal, perfil, motor TensorRT |
+| `prior` | a prevalência esperada no talhão | sim (`prior_shift`, gêmeo) | — |
+| `regra_de_decisao` | limiares e tabelas de evidência | não (`fit_edge`, `fit_fusion`) | comparações de alarme com a regra antiga |
+
+**Procedência.** O `promove` exige `--aprovador` e grava `<pesos>.head.provenance.json` ao
+lado da cabeça: o tipo, a cabeça de partida e a nova (SHA-256), a rodada e o escopo, o hash
+do laudo do portão e do dado de campo, quem liberou e, se forçada, o motivo. O hash dela vai
+no perfil da borda (`measured.continuo.procedencia_sha256`) e o Rover recusa cabeça adaptada
+sem procedência válida (cópia byte a byte de `atualizacao.py` em
+`valtexa_rover/edge_ai/vendor/`). O `reverte` leva a procedência junto: a cabeça de origem
+volta sem nenhuma.
+
+**Motor com a plasticidade do dNATY** (`--motor dnaty-plasticidade`,
+[`training/motor_dnaty.py`](training/motor_dnaty.py); precisa de torch e dnaty): renasce os
+neurônios dormentes da cabeça antes do ajuste. Medido em 18/10/2026 (MODELS.md): a cabeça do
+café não tem dormentes nem perde rank efetivo em 3 rodadas, o motor sai idêntico ao padrão, e
+renascer à força a fração pura do dNATY piora. Fica desligado.
+
+**Consentimento**: cada exemplo na memória e nos conjuntos guarda a origem e o arquivo; o
+`esquece` tira o que o cliente retirou. A cabeça já treinada com o dado continua com o que
+aprendeu — para tirar a influência, `reverte` para antes da rodada e adapte de novo sem ele.
 
 ## Paridade entre treino e inferência
 

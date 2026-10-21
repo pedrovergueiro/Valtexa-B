@@ -285,6 +285,28 @@ class ModelInfo(BaseModel):
     recommended: bool = Field(default=False, description="Se é a versão sugerida da cultura.")
 
 
+class ContinualOut(BaseModel):
+    """O aprendizado contínuo da cabeça de um modelo (``training.adapt_campo``)."""
+
+    key: str
+    head_sha256: str | None = Field(
+        description="SHA-256 da cabeça em produção (o que o perfil da borda do Rover confere)."
+    )
+    history: list[dict[str, Any]] = Field(
+        description="Rodadas, promoções, reversões, monitoramentos e esquecimentos, em ordem."
+    )
+    memory: dict[str, Any] | None = Field(
+        description="Memória de replay: exemplos, vagas por classe e contagem por origem."
+    )
+    regression_sets: list[dict[str, Any]] = Field(
+        description="Conjuntos congelados do portão (gate=false: só mede)."
+    )
+    validation_sets: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Validação do que já se sabia, que escolhe a época (nunca o portão).",
+    )
+
+
 class ModelChoice(BaseModel):
     """Uma versão de modelo no seletor — como escolher entre modelos de um assistente."""
 

@@ -112,6 +112,20 @@ def fake_model(client: TestClient) -> FakeKerasModel:
 
 
 @pytest.fixture(autouse=True)
+def _models_dir_isolado(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Cada teste começa com uma pasta de modelos VAZIA.
+
+    O ``models/`` do repositório tem os pesos e as calibrações de produção (Git LFS); sem
+    isto, um teste que espera "sem calibração" passava ou falhava conforme o que estivesse
+    na pasta da máquina. Quem precisa de arquivos aponta ``settings.models_dir`` para o
+    próprio ``tmp_path`` — esse ``monkeypatch`` roda depois e vale.
+    """
+    monkeypatch.setattr(settings, "models_dir", tmp_path_factory.mktemp("models_vazio"))
+
+
+@pytest.fixture(autouse=True)
 def _reset_confidence_threshold() -> Iterator[None]:
     """Impede que um teste de abstenção vaze o limiar para os demais."""
     original = settings.min_confidence

@@ -446,6 +446,9 @@ class TileResult:
     needs_review: bool = False
     in_scope: bool | None = None
     scene: str | None = None
+    geometria: dict[str, Any] | None = None
+    """Do Rover (``edge_ai/geometria.py``): ponto 3D no referencial da câmera, normal e
+    inclinação da superfície, face foliar (``indeterminada`` até haver como saber)."""
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> TileResult:
@@ -462,6 +465,7 @@ class TileResult:
             needs_review=bool(data.get("needs_review", False)),
             in_scope=data.get("in_scope"),
             scene=data.get("scene"),
+            geometria=_tile_geometry(data.get("geometria")),
         )
 
     @property
@@ -815,6 +819,8 @@ class _PassEvidence:
     review_refs: list[dict[str, Any]] = field(default_factory=list)
     first_time: str | None = None
     last_time: str | None = None
+    lesions: list[dict[str, Any]] = field(default_factory=list)
+    """Os recortes a favor de uma doença, no referencial da planta (ver :func:`lesion_tracks`)."""
 
     def touch_time(self, ts: datetime) -> None:
         iso = ts.isoformat()
@@ -842,6 +848,7 @@ class _PassEvidence:
             self.out_of_scope_by_scene[k] = self.out_of_scope_by_scene.get(k, 0) + v
         self.n_needs_review += other.n_needs_review
         self.review_refs = (self.review_refs + other.review_refs)[:max_refs]
+        self.lesions = (self.lesions + other.lesions)[:MAX_LESIONS_PER_PASS]
         for t in (other.first_time, other.last_time):
             if t is not None:
                 self.touch_time(parse_timestamp(t))
@@ -1006,6 +1013,109 @@ class PlantSummary:
 # ---------------------------------------------------------------------------------------------
 
 
+def _tile_geometry(raw: Any) -> dict[str, Any] | None:
+    """Só o que a fusão usa da geometria do Rover, conferido: o recorte chega como dicionário
+    livre, e um campo torto não pode derrubar a ingestão do quadro."""
+    if not isinstance(raw, Mapping):
+        return None
+    centro = raw.get("centro_mm")
+    if not (isinstance(centro, list | tuple) and len(centro) == 3
+            and all(isinstance(c, int | float) and math.isfinite(c) for c in centro)
+            and centro[2] > 0):
+        return None
+    inclinacao = raw.get("inclinacao_graus")
+    if not (isinstance(inclinacao, int | float) and 0 <= inclinacao <= 90):
+        inclinacao = None
+    textos = {k: raw.get(k) if isinstance(raw.get(k), str) and len(raw[k]) <= 40 else None
+              for k in ("superficie", "face")}
+    return {"centro_mm": [float(c) for c in centro], "inclinacao_graus": inclinacao, **textos}
+
+
+MAX_LESIONS_PER_PASS = 64
+"""Por planta e passada: a planta muito tomada não enche o estado do talhão."""
+LESION_TOLERANCE_M = {"x_m": 0.10, "height_m": 0.10, "canopy_depth_m": 0.15}
+"""Duas observações a menos disto (em cada eixo, normalizado) são a mesma lesão. Na mesma
+passada, várias câmeras e quadros veem o mesmo ponto; entre passadas, o Rover passa de novo."""
+
+
+def _lesion_distance(a: Mapping[str, Any], b: Mapping[str, Any]) -> float:
+    soma, eixos = 0.0, 0
+    for eixo, tol in LESION_TOLERANCE_M.items():
+        va, vb = a.get(eixo), b.get(eixo)
+        if va is None or vb is None:
+            continue
+        soma += ((float(va) - float(vb)) / tol) ** 2
+        eixos += 1
+    return math.sqrt(soma) if eixos else math.inf
+
+
+def _cluster(observacoes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """As observações de uma passada viram lesões: média das que caem juntas (mesma doença)."""
+    grupos: list[list[dict[str, Any]]] = []
+    for o in sorted(observacoes, key=lambda o: -o["llr"]):
+        for g in grupos:
+            if g[0]["disease"] == o["disease"] and _lesion_distance(g[0], o) <= 1.0:
+                g.append(o)
+                break
+        else:
+            grupos.append([o])
+    saida = []
+    for g in grupos:
+        lesao = {"disease": g[0]["disease"], "views": len(g),
+                 "llr_max": max(o["llr"] for o in g)}
+        for eixo in (*LESION_TOLERANCE_M, "tilt_deg"):
+            valores = [float(o[eixo]) for o in g if o.get(eixo) is not None]
+            lesao[eixo] = round(sum(valores) / len(valores), 3) if valores else None
+        faces = {o.get("face") for o in g if o.get("face")}
+        lesao["face"] = faces.pop() if len(faces) == 1 else ("indeterminada" if faces else None)
+        saida.append(lesao)
+    return saida
+
+
+def lesion_tracks(passes: list[tuple[str, list[dict[str, Any]]]],
+                  center_m: float) -> list[dict[str, Any]]:
+    """As trilhas de lesão de uma planta ao longo das passadas, na ordem delas.
+
+    Cada passada: as observações viram lesões (:func:`_cluster`); cada lesão casa com a trilha
+    viva mais próxima da mesma doença (dentro da tolerância), ou abre uma. O estado é contra a
+    última passada que viu a planta: ``nova`` (só nela), ``persistente`` (nela e antes),
+    ``nao_revista`` (vista antes, não nesta — caiu, foi tratada, ou a câmera não a pegou).
+    """
+    trilhas: list[dict[str, Any]] = []
+    for pass_id, observacoes in passes:
+        for lesao in _cluster(observacoes):
+            candidatas = [t for t in trilhas if t["disease"] == lesao["disease"]
+                          and t["last_pass"] != pass_id]
+            melhor = min(candidatas, key=lambda t: _lesion_distance(t["position"], lesao),
+                         default=None)
+            if melhor is not None and _lesion_distance(melhor["position"], lesao) <= 1.0:
+                melhor["passes"].append(pass_id)
+                melhor["last_pass"] = pass_id
+                melhor["views"] += lesao["views"]
+                melhor["position"] = {e: lesao[e] if lesao[e] is not None
+                                      else melhor["position"][e] for e in LESION_TOLERANCE_M}
+                melhor["tilt_deg"] = lesao["tilt_deg"] if lesao["tilt_deg"] is not None else (
+                    melhor["tilt_deg"])
+                continue
+            trilhas.append({"disease": lesao["disease"], "passes": [pass_id],
+                            "first_pass": pass_id, "last_pass": pass_id,
+                            "views": lesao["views"], "tilt_deg": lesao["tilt_deg"],
+                            "face": lesao["face"],
+                            "position": {e: lesao[e] for e in LESION_TOLERANCE_M}})
+    ultima = passes[-1][0] if passes else None
+    for i, t in enumerate(trilhas):
+        t["id"] = f"L{i + 1}"
+        if t["last_pass"] != ultima:
+            t["state"] = "nao_revista"
+        elif len(t["passes"]) > 1:
+            t["state"] = "persistente"
+        else:
+            t["state"] = "nova"
+        x = t["position"]["x_m"]
+        t["offset_from_center_m"] = None if x is None else round(x - center_m, 3)
+    return trilhas
+
+
 def _safe_filename(field_id: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", field_id)
     if safe != field_id or not safe:
@@ -1014,11 +1124,16 @@ def _safe_filename(field_id: str) -> str:
     return f"{safe}.json"
 
 
-def _row_sort_key(row_id: str) -> tuple[int, float, str]:
-    try:
-        return (0, float(row_id), row_id)
-    except ValueError:
-        return (1, 0.0, row_id)
+_ROW_NUMBER = re.compile(r"(\d+(?:\.\d+)?)")
+
+
+def _row_sort_key(row_id: str) -> tuple[tuple[int, float, str], ...]:
+    """Ordem natural das ruas: ``G2`` antes de ``G10`` (texto comparado como texto, número
+    como número). A ordem vira distância entre ruas no contágio (:mod:`app.prescricao`,
+    :mod:`app.gemeo`): comparar ``G10`` como texto o punha entre ``G1`` e ``G2``."""
+    partes = _ROW_NUMBER.split(str(row_id))
+    return tuple((0, float(p), "") if i % 2 else (1, 0.0, p)
+                 for i, p in enumerate(partes) if p != "")
 
 
 class PlantFusionStore:
@@ -1184,7 +1299,8 @@ class PlantFusionStore:
                 ev.n_out_of_scope += 1
                 ev.out_of_scope_by_scene[scene] = ev.out_of_scope_by_scene.get(scene, 0) + 1
             else:
-                self._record_tile(ev, obs, tile, diseases, params, model)
+                llrs = self._record_tile(ev, obs, tile, diseases, params, model)
+                self._record_lesion(ev, obs, tile, x, diseases, llrs)
                 if self.tile_log:
                     logged.setdefault(plant.plant_id, []).append(tile)
             if obs.has_geo:
@@ -1315,7 +1431,7 @@ class PlantFusionStore:
         diseases: tuple[str, ...],
         params: list[DetectionParams],
         model: FusionCalibration | None = None,
-    ) -> None:
+    ) -> list[float]:
         cfg = self.config
         weight = tile_weight(tile, cfg.review_weight)
         if model is None:
@@ -1345,6 +1461,39 @@ class PlantFusionStore:
                 ev.review_refs.append(
                     {"frame": obs.frame_key, "camera": obs.camera_key, "box": list(tile.box)}
                 )
+        return llrs
+
+    @staticmethod
+    def _record_lesion(ev: _PassEvidence, obs: FrameObservation, tile: TileResult, x: float,
+                       diseases: tuple[str, ...], llrs: list[float]) -> None:
+        """Guarda o recorte a favor de uma doença no referencial da planta (Nível 2, 5.3).
+
+        ``x_m`` ao longo da rua (o mesmo da associação a planta), a altura (pela geometria do
+        Rover, ou pela altura do recorte), quanto o ponto está dentro da copa (a profundidade
+        menos a distância da planta) e a orientação da superfície. Sem geometria, só ao longo
+        e altura.
+        """
+        if not llrs or len(ev.lesions) >= MAX_LESIONS_PER_PASS:
+            return
+        i = max(range(len(llrs)), key=llrs.__getitem__)
+        if llrs[i] <= 0:
+            return
+        g = tile.geometria or {}
+        centro = g.get("centro_mm")
+        altura_mm = (obs.camera_height_mm - float(centro[1]) if centro and len(centro) == 3
+                     else tile.height_mm)
+        copa_m = (round((float(centro[2]) - obs.distance_mm) / 1000.0, 3)
+                  if centro and len(centro) == 3 else None)
+        ev.lesions.append({
+            "frame": obs.frame_key, "time": obs.timestamp, "disease": diseases[i],
+            "llr": round(float(llrs[i]), 3),
+            "probability": round(float(tile.probabilities.get(diseases[i], 0.0)), 4),
+            "x_m": round(float(x), 3),
+            "height_m": None if altura_mm is None else round(float(altura_mm) / 1000.0, 3),
+            "canopy_depth_m": copa_m,
+            "tilt_deg": g.get("inclinacao_graus"), "surface": g.get("superficie"),
+            "face": g.get("face"),
+        })
 
     def _record_geo(self, plant: _PlantState, obs: FrameObservation, x: float) -> None:
         """Estimativa geográfica da planta vista por este recorte, acumulada em média.
@@ -1606,6 +1755,71 @@ class PlantFusionStore:
         if pid is None or pid not in plant.passes:
             raise KeyError(f"planta {plant_id!r} sem observações na passada {pass_id!r}")
         return self._summarize(state, plant, pid)
+
+    def pass_observations(self, field_id: str) -> dict[str, Any]:
+        """A evidência de cada passada **fechada**, planta a planta, **sem** o carregamento
+        temporal — a entrada do gêmeo digital (:mod:`app.gemeo`).
+
+        A posterior de :meth:`plants` puxa a da passada anterior (``temporal_carryover``):
+        bom para o mapa de hoje, ruim para um modelo dinâmico, que contaria a persistência
+        duas vezes (uma no carregamento, outra na própria dinâmica). Aqui cada passada vale
+        sozinha: prior da cultura + a evidência calibrada dela. ``priors`` devolve o prior de
+        cada doença, para o gêmeo recuperar a razão de verossimilhança da passada.
+        """
+        state = self._require(field_id)
+        crop_cfg = self.config.crop(state.crop)
+        diseases = crop_cfg.diseases
+        base_lo = np.array([logit(crop_cfg.prior(d)) for d in diseases])
+        fechadas = [state.passes[p] for p in state.pass_order
+                    if p in state.passes and state.passes[p].closed]
+        plantas = []
+        for plant in sorted(state.plants.values(),
+                            key=lambda p: (_row_sort_key(p.row_id), p.center_m)):
+            obs: dict[str, Any] = {}
+            for info in fechadas:
+                ev = plant.passes.get(info.pass_id)
+                if ev is None or ev.n_in_scope == 0:
+                    continue
+                model = self._pass_model(info)
+                llr, _views = self._pass_log_likelihood(
+                    ev, len(diseases), None if model is None else model.tile_correlation)
+                if model is not None:
+                    llr = model.evidence_offset + model.evidence_scale * llr
+                obs[info.pass_id] = {
+                    "time": ev.first_time,
+                    "n_tiles": ev.n_in_scope,
+                    "posterior": {d: sigmoid(float(lo))
+                                  for d, lo in zip(diseases, base_lo + llr, strict=True)},
+                }
+            lat = lon = None
+            if plant.geo_n:
+                lat, lon = plant.geo_lat_sum / plant.geo_n, plant.geo_lon_sum / plant.geo_n
+            plantas.append({"plant_id": plant.plant_id, "row_id": plant.row_id,
+                            "x_along_m": plant.center_m, "lat": lat, "lon": lon,
+                            "observations": obs})
+        return {
+            "field_id": field_id,
+            "crop": state.crop,
+            "diseases": list(diseases),
+            "priors": {d: float(crop_cfg.prior(d)) for d in diseases},
+            "plant_spacing_m": state.plant_spacing_m or crop_cfg.plant_spacing_m,
+            "row_spacing_m": crop_cfg.row_spacing_m,
+            "passes": [{"pass_id": i.pass_id, "first_time": i.first_time,
+                        "last_time": i.last_time} for i in fechadas],
+            "plants": plantas,
+        }
+
+    def lesions(self, field_id: str, plant_id: str) -> dict[str, Any]:
+        """As lesões da planta, reencontradas de uma passada para outra (:func:`lesion_tracks`)."""
+        state = self._require(field_id)
+        plant = state.plants.get(state.resolve(plant_id))
+        if plant is None:
+            raise KeyError(f"planta desconhecida: {plant_id!r}")
+        ordem = [p for p in state.pass_order if p in plant.passes]
+        return {"plant_id": plant.plant_id, "row_id": plant.row_id,
+                "center_m": round(plant.center_m, 3), "passes": ordem,
+                "tracks": lesion_tracks([(p, plant.passes[p].lesions) for p in ordem],
+                                        plant.center_m)}
 
     def plant_ids(self, field_id: str) -> list[str]:
         return sorted(self._require(field_id).plants)

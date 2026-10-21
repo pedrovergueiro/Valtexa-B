@@ -402,8 +402,13 @@ def head_block(spec: Any, caminho: str) -> dict[str, Any] | None:
     with torre.open("rb") as fh:
         for bloco in iter(lambda: fh.read(1 << 20), b""):
             sha.update(bloco)
-    return {"encoder_model_id": caminho.removeprefix("cabeca:"),
-            "encoder_sha256": sha.hexdigest(), "input_size": 224}
+    bloco = {"encoder_model_id": caminho.removeprefix("cabeca:"),
+             "encoder_sha256": sha.hexdigest(), "input_size": 224}
+    if spec.head_path.exists():
+        # A cabeça muda entre versões do mesmo .onnx (aprendizado contínuo,
+        # training.adapt_campo): o Rover recusa este perfil com outra cabeça.
+        bloco["head_sha256"] = hashlib.sha256(spec.head_path.read_bytes()).hexdigest()
+    return bloco
 
 
 def categories(labels: list[str]) -> dict[str, str]:

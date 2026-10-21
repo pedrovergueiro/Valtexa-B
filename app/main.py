@@ -31,6 +31,7 @@ from app.config import ALLOWED_CONTENT_TYPES, HTTP_422, UPLOAD_CHUNK_BYTES, sett
 from app.contorno_api import router as contorno_router
 from app.fields_api import router as fields_router
 from app.framing import framing_model
+from app.gemeo_api import router as gemeo_router
 from app.inference.preprocess import InvalidImageError
 from app.model import CornDiseaseModel, ModelNotLoadedError, UnknownClassError, Upload
 from app.registry import MODEL_SPECS, Platform, default_for_crop, registry, specs_by_crop
@@ -44,6 +45,7 @@ from app.review import (
 from app.rover_api import router as rover_router
 from app.schemas import (
     BatchPredictionResponse,
+    ContinualOut,
     CropChoices,
     ErrorResponse,
     ExplanationResponse,
@@ -148,6 +150,7 @@ app.include_router(terrain_router)
 app.include_router(contorno_router)
 app.include_router(rover_router)
 app.include_router(fields_router)
+app.include_router(gemeo_router)
 
 
 @app.exception_handler(InvalidImageError)
@@ -290,6 +293,26 @@ def model_choices() -> list[CropChoices]:
             )
         )
     return result
+
+
+@app.get(
+    "/models/{key}/continuo",
+    response_model=ContinualOut,
+    responses=ERROR_RESPONSES,
+    summary="Aprendizado contínuo da cabeça: histórico, memória e portão",
+)
+def model_continual(key: str) -> ContinualOut:
+    """O que a cabeça deste modelo aprendeu no campo e o que o portão decidiu em cada rodada.
+
+    Só leitura: rodar, promover e reverter é pelo ``training.adapt_campo`` (a decisão de
+    trocar a cabeça em produção fica com quem opera, com o laudo na mão).
+    """
+    spec = MODEL_SPECS.get(key)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Modelo desconhecido: {key}.")
+    from app.inference.continual import status as estado_continuo
+
+    return ContinualOut(key=key, **estado_continuo(spec.weights_path, spec.head_path))
 
 
 @app.get(

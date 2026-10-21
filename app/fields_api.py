@@ -335,6 +335,24 @@ def plant_evolution(field_id: str, plant_id: str) -> dict[str, Any]:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc.args[0])) from exc
 
 
+@router.get(
+    "/{field_id}/plants/{plant_id}/lesoes",
+    summary="As lesões da planta no referencial dela, reencontradas entre passadas",
+)
+def plant_lesions(field_id: str, plant_id: str) -> dict[str, Any]:
+    """Cada trilha: a doença, a posição na planta (ao longo da rua, altura, dentro da copa), a
+    inclinação da folha, a face (``indeterminada`` quando não se sabe) e o estado contra a
+    última passada (``nova``, ``persistente``, ``nao_revista``). Precisa da geometria 3D dos
+    recortes (Rover com profundidade); sem ela, só ao longo e altura."""
+    store = _require_fields()
+    _known(store, field_id)
+    try:
+        with fields._lock:
+            return store.lesions(field_id, plant_id)
+    except KeyError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc.args[0])) from exc
+
+
 @router.post(
     "/{field_id}/passes/{pass_id}/close",
     summary="Fecha uma passada: consolida as plantas e aponta o que mudou",

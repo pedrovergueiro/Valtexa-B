@@ -150,6 +150,11 @@ as cenas de citros entraram, e o aviso de cultura trocada virava ruído. O
 folha de outra cultura pega) para cada modelo.
 """
 
+LEAF_LIKE_OUTSIDE = ("folha_outra",)
+"""Cenas fora do escopo que ainda são folha: vencer com elas não recusa a foto na regra da
+"cena vencedora é folha" (medido em 16/10/2026: ~10% das folhas de café boas têm "folha de
+outra planta" como cena mais provável — recusá-las custaria 13,6% de folha legítima)."""
+
 Encoder = Callable[[list[Image.Image]], np.ndarray]
 """Imagens -> embeddings ``(N, D)`` da torre de visão, ainda não normalizados."""
 
@@ -182,6 +187,16 @@ class FramingReference:
     Quando o modelo é escolhido, o portão compara a foto só com a folha da cultura
     dele e com o que não é folha — então o limiar certo é outro. Cultura ausente
     aqui usa o ``threshold`` geral."""
+
+    leaf_winner_crops: tuple[str, ...] = ()
+    """Culturas em que, além do limiar, a cena **mais provável** tem de ser folha.
+
+    O limiar sozinho mede quanta probabilidade vai para as cenas do escopo; com ele baixo
+    (calibrado para recusar poucas folhas boas), passava foto em que a cena vencedora era
+    "pessoa": no café, em vídeos de lavoura (16/10/2026), 96 quadros de gente na frente da
+    planta, 13 de cereja, 11 de planta inteira — e a cabeça chamava quase todos de ferrugem.
+    Com a regra no café: folha de café boa recusada 1,8% → 3,4%, BRACOL 0% → 0%, e nenhum
+    desses quadros passa. Fora desta lista, o portão é o de antes."""
 
     def allowed_scenes(self, crop: str | None = None) -> np.ndarray:
         """``(P,)`` booleano: as cenas que entram na conta para a cultura escolhida.
@@ -234,6 +249,7 @@ class FramingReference:
             calibrated_on=np.array(self.calibrated_on),
             threshold_crops=np.array(sorted(self.thresholds), dtype=str),
             threshold_values=np.array([self.thresholds[c] for c in sorted(self.thresholds)]),
+            leaf_winner_crops=np.array(sorted(self.leaf_winner_crops), dtype=str),
         )
 
     @classmethod
@@ -265,6 +281,11 @@ class FramingReference:
                         }
                         if "threshold_crops" in raw
                         else {}
+                    ),
+                    leaf_winner_crops=(
+                        tuple(str(c) for c in raw["leaf_winner_crops"])
+                        if "leaf_winner_crops" in raw
+                        else ()
                     ),
                 )
         except (OSError, KeyError, ValueError) as exc:
@@ -307,6 +328,8 @@ def judge(
     scores = restricted[:, reference.in_scope].sum(axis=1)
     threshold = reference.threshold_for(crop)
     crop_columns = [i for i, c in enumerate(reference.crops) if c]
+    leaf_like = reference.in_scope | np.isin(np.array(reference.keys), LEAF_LIKE_OUTSIDE)
+    winner_rule = crop is not None and crop in reference.leaf_winner_crops
     own = [i for i in crop_columns if reference.crops[i] == crop]
     others = [i for i in crop_columns if reference.crops[i] != crop]
 
@@ -319,9 +342,12 @@ def judge(
         if crop and own and others:
             strongest_other = max(full[i] for i in others)
             matches = bool(strongest_other < mismatch_ratio * max(full[i] for i in own))
+        passes = score >= threshold
+        if winner_rule:
+            passes = passes and bool(leaf_like[int(np.argmax(row))])
         results.append(
             FramingResult(
-                in_scope=bool(score >= threshold),
+                in_scope=bool(passes),
                 score=float(score),
                 scene=reference.keys[int(np.argmax(row))],
                 crop=detected,

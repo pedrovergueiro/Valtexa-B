@@ -80,6 +80,15 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="Outras fotos que DEVEM passar (ex.: folha em close fora do catálogo).",
     )
+    parser.add_argument(
+        "--folha-vencedora",
+        nargs="*",
+        default=["coffee"],
+        help=(
+            "Culturas em que a cena mais provável também tem de ser folha (ver "
+            "FramingReference.leaf_winner_crops). Padrão: café."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--output", type=Path, default=None, help="Padrão: models/framing.npz.")
     return parser.parse_args()
@@ -145,6 +154,8 @@ def main() -> None:
     per_crop = crop_thresholds(draft, calibration, args.percentile)
     if args.per_crop_thresholds:
         reference = dataclasses.replace(reference, thresholds=per_crop)
+    reference = dataclasses.replace(reference,
+                                    leaf_winner_crops=tuple(args.folha_vencedora or ()))
     print(f"\nLimiar geral: P(no escopo) >= {reference.threshold:.4f} ({len(scores)} fotos boas)")
     uso = "gravado" if args.per_crop_thresholds else "só informativo (--per-crop-thresholds)"
     for crop, value in sorted(per_crop.items()):

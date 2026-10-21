@@ -1819,6 +1819,427 @@ recall, deve usar limiar mais baixo que o `rover-understory`.
 
 ---
 
+## Aprendizado contínuo da cabeça — medido em 15/10/2026
+
+Como usar: README, "Aprendizado contínuo no campo". Aqui, a medição e o que ela ensinou.
+
+**Protocolo** (`python -m training.mede_continuo`, CPU, ~7 s por rodada): cabeça de partida
+treinada só no `coffee-foliar` (a dNATY de 01/10: 1176→64→256, GELU/ReLU); o BRACOL faz a
+fazenda nova — 1.122 folhas depois de tirar 220 quase cópias do café (cosseno > 0,97), 30%
+num teste final que ninguém vê, o resto em 3 rodadas de ~197 folhas e um lote de controle;
+cada rodada é dividida 60/15/25 por grupo como o `adapt_campo` faz. Três sementes (42, 7,
+2026: divisões diferentes do BRACOL). Memória: todo o treino do café (2.158, 1.000 vagas por
+classe). Portão e seleção nos padrões do `adapt_campo`.
+
+| estado final (média ± desvio, 3 sementes) | café | AF café | BRACOL | AF BRACOL | externo | rodadas aprovadas |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| partida | 0,968 | 2,6% | 0,300 | 100% | 0,165 | — |
+| ingênuo (só o campo) | — | — | — | — | — | 0/9 |
+| ingênuo promovido à força | 0,813 ± 0,030 | 3,2% | 0,850 | 0% | 0,861 | (0/9) |
+| replay simples | 0,967 ± 0,005 | 2,9% | 0,840 ± 0,011 | 3,6% ± 5,1 | 0,819 ± 0,041 | 3/9 |
+| replay + destilação + L2-SP | 0,971 ± 0,001 | 2,0% ± 1,6 | 0,830 ± 0,042 | 0% | 0,706 ± 0,142 | 4/9 |
+| **+ seleção na validação original** | **0,967 ± 0,003** | **1,2% ± 0,4** | **0,847 ± 0,015** | **0%** | **0,841 ± 0,035** | 4/9 |
+
+Acurácia balanceada; AF = alarme falso em folha sadia; externo = `coffee-leaves-disease`
+(só mede). Rótulos ruins (40% trocados, lote novo, depois das rodadas): 3/3 recusados.
+Controle com os mesmos rótulos certos: 1/3 aprovado — depois de aprender o BRACOL, um lote a
+mais quase não tem o que ensinar ("sem ganho").
+
+**Referência: o treino conjunto.** A cabeça treinada de uma vez com café + BRACOL (01/10) e
+a de produção sobem o AF no café de 2,6% para 4,3% e 5,2%. Não existe cabeça que aprenda o
+BRACOL sem mexer em nenhuma folha sadia do café; o aprendizado contínuo com o portão terminou
+abaixo das duas.
+
+### O que a medição corrigiu no desenho (não repetir)
+
+1. **Margem menor que a resolução recusa tudo.** O primeiro portão pedia o limite superior
+   do IC do aumento de AF ≤ 1%. Com 116 folhas sadias no teste do café, duas folhas que mudam
+   já põem esse limite em ~3%: recusou todas as candidatas boas, inclusive uma que *baixava*
+   o AF de 2,6% para 1,7%. Hoje: não-inferioridade só no **agregado** (amostra que decide);
+   AF, classes e conjuntos por piora demonstrada e margem pontual onde a amostra resolve.
+2. **Conjunto pequeno não aguenta margem pontual.** O teste de uma rodada tem ~49 folhas; uma
+   queda de 3% é uma folha e meia. Uma rodada foi recusada por "cair 6,6%" ali enquanto
+   **subia** de 0,860 para 0,896 no teste final de 336 folhas. Por conjunto, só piora
+   demonstrada.
+3. **Validar no que a cabeça decorou não protege nada.** A primeira seleção de época usava
+   15% da memória — exemplos do treino original, que a cabeça já tinha visto. Nunca recusou
+   uma época (com e sem ela, as linhas saíam idênticas). Com a validação original (o split
+   que escolheu a arquitetura no `fit_heads`) mais a validação de cada rodada promovida,
+   contra não selecionar: AF no café 2,0% ± 1,6 → 1,2% ± 0,4, BRACOL 0,830 ± 0,042 → 0,847 ±
+   0,015, externo 0,706 ± 0,142 → 0,841 ± 0,035 — menos variância em tudo.
+4. **Memória: tamanho e destilação.** Com 300 vagas por classe (~60% do treino do café)
+   nenhuma rodada de replay simples passou (0/3, uma semente, portão da época); com 1.000
+   (todo o treino, 7,7 MB) a primeira passa. Mas o replay simples, mesmo com 1.000, esqueceu
+   a rodada 1 nas seguintes (−3,6 e −8,2 pontos no teste dela) — é o que a destilação dos
+   logits e a âncora seguram. Padrão: 1.000 vagas.
+5. **Época 0 é a cabeça de partida, byte a byte.** Sem época melhor, a "candidata" saía com
+   pesos regravados em float64 e outro SHA — o perfil da borda a trataria como cabeça nova.
+
+**Limites**: o BRACOL são folhas inteiras fotografadas, não recortes do Rover; o primeiro
+número de campo de verdade sai da primeira rodada com a validação do agrônomo. Três sementes
+dão a ordem de grandeza, não um intervalo fino. A cabeça de partida e a arquitetura vêm do
+dNATY (licença não comercial; ver a seção da cabeça). O `adapt_campo` em produção não usa o
+dNATY; o motor com a plasticidade dele é opcional e foi medido abaixo.
+
+### Plasticidade do dNATY no ciclo contínuo — medido em 18/10/2026
+
+O dNATY 2.2 traz o *continual backprop* (Dohare et al., 2024): mede a utilidade de cada
+neurônio oculto (`|ativação| × ||pesos de saída||`), renasce os menos úteis com pesos de
+entrada novos e de saída zerados, e acompanha o rank efetivo da última camada. O
+`training/motor_dnaty.py` remonta a `DynamicMLP` a partir da cabeça (BatchNorm identidade —
+o inverso do `from_dnaty`; ida e volta com erro < 1e-4 nos logits), usa o tracker e o
+`reinit_dormant` do próprio dNATY, devolve à cabeça só as linhas e colunas renascidas (o resto
+com os mesmos bits) e treina com o `adapt` de sempre; o portão compara com a cabeça
+instalada. `adapt_campo adapta --motor dnaty-plasticidade`.
+
+Mesmo protocolo da medição de 15/10 (BRACOL como fazenda nova, 3 rodadas, 3 sementes;
+`mede_continuo --estrategias proposto proposto_dnaty proposto_dnaty_puro`):
+
+| | café, teste | AF sadia café | BRACOL, teste final | AF sadia BRACOL | externo | aprovadas |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `proposto` (produção) | 96,7% ± 0,3 | 1,2% ± 0,4 | 84,7% ± 1,5 | 0% | 84,1% ± 3,5 | 4/9 |
+| dNATY, só dormentes (< 10% da mediana) | 96,7% ± 0,3 | 1,2% ± 0,4 | 84,7% ± 1,5 | 0% | 84,1% ± 3,5 | 4/9 |
+| dNATY, fração pura (5% por rodada) | 96,4% ± 0,2 | 2,6% ± 1,4 | 82,9% ± 3,7 | 2,5% ± 2,0 | 74,6% ± 4,9 | 4/9 |
+
+* **Não há neurônio dormente** na cabeça do café: em nenhuma das 9 rodadas algum ficou
+  abaixo de 10% da mediana da camada — o motor com limiar renasceu 0 e saiu idêntico.
+* **Não há perda de plasticidade para remediar** em 3 rodadas: o rank efetivo da última
+  camada **sobe** com a adaptação (≈ 58 → 70–75).
+* Renascer os 5% menos úteis sempre (73 neurônios por rodada: 58, 3 e 12 nas três camadas)
+  joga fora capacidade útil: piora o BRACOL, o externo (−9,5 pontos) e o alarme falso em
+  sadia nas duas fazendas. O portão segurou o pior, mas o estado final é pior.
+* Rótulos ruins: o portão recusou 3/3 também com o motor dNATY.
+
+**Decisão**: produção continua no motor NumPy. O dNATY fica como opção para quando a
+cabeça tiver muitas rodadas: o laudo registra o rank efetivo e os renascidos quando o motor
+roda, e a fração pura não deve ser usada. Reproduzir: WSL,
+`/home/pedro/medicoes/continuo/mede_continuo_v8_dnaty.{log,json}`.
+
+## Café em vídeo real de lavoura — medido em 16/10/2026
+
+**O teste.** 20 vídeos de café do YouTube (reportagens, closes de ferrugem, bicho-mineiro e
+cercóspora, lavoura carregada vista de lado, colheita, plantio; dois clipes de música e um
+jardim como controle), 1.024 quadros pela API e 511 pelo motor do Rover. **Só medição**: os
+quadros não treinam nem calibram nada.
+
+| | resultado |
+| --- | --- |
+| API (portão + cabeça + conformal) | 42% dos quadros passam no portão; desses, **89% saem Rust**, quase sempre com conjunto conformal de 1 classe |
+| Motor do Rover (sem portão) | **511/511 quadros viram evento** (Rust em 473), inclusive os clipes de música |
+| Percepção ativa | quase não age: o erro é confiante, não é dúvida. O alinhamento funciona em filmagem real: 88% dos pares a 0,4 s, 79% a 0,8 s |
+
+Conferido a olho: quadros de lavoura, colheita e plantio chamados de doença não mostram
+ferrugem (são cereja madura, pano de derriça, gente; uma xícara de café no coador saiu
+"Rust 0,97"). Nos vídeos de doença a lesão aparece, mas tudo vira Rust — bicho-mineiro com
+a larva à vista, cercóspora, mancha aureolada.
+
+**Por quê** (medido): *Rust é o ralo da cabeça quando a foto piora* — folhas limpas do teste
+degradadas como vídeo: cercóspora 98% → 35% (160 px, JPEG forte), bicho-mineiro 98% → 40%
+(borrão de movimento), a diferença virando Rust. Recortes que o SigLIP chama de "fruto" saem
+93% Rust (cereja madura). E o portão do café aceitava foto com 6,5% de probabilidade de folha.
+
+### Portão do café: a cena vencedora tem de ser folha (instalado)
+
+`FramingReference.leaf_winner_crops` (padrão do `fit_framing --folha-vencedora`: café):
+além do limiar, a cena mais provável tem de ser folha (o escopo, mais "folha de outra
+planta", que vence em ~10% das folhas de café boas). Calibrado só com fotos boas:
+
+| regra | folha de café boa recusada | BRACOL recusado | quadros de vídeo aceitos |
+| --- | ---: | ---: | --- |
+| antes | 1,8% | 0% | 435 (96 de pessoa, 13 de fruto, 11 de planta inteira) |
+| **cena vencedora é folha** | **3,4%** | **0%** | **298** — só cenas de folha |
+| limiar no percentil 5 do café | 5,7% | 3,0% | 330 |
+
+O portão tira o lixo; não conserta a cabeça: dos quadros de folha que passam, ~90% seguem Rust.
+
+### Cabeça robusta à captura: três tentativas, nenhuma promovida
+
+`training/robustez_captura.py`: cada foto do treino ganha 2 versões degradadas como vídeo
+(resolução e JPEG, movimento, desfoque, exposição, ruído), a cabeça é ajustada com replay,
+destilação e âncora, e o portão do aprendizado contínuo decide (teste limpo não pode piorar;
+teste degradado — de fotos que a produção nunca treinou — tem de ganhar).
+
+| tentativa | teste degradado | café limpo | cauda de doença em sadia | decisão |
+| --- | ---: | ---: | --- | --- |
+| 1 (sem suavização) | 0,698 → **0,850** | 0,970 → 0,964 | não medida pelo portão | APROVADA → promovida → **revertida** |
+| 2 (suavização 0,1) | 0,698 → **0,884** | 0,970 → 0,964 | 0,7% → 0,7% | REPROVADA: ferrugem −5,2, mineiro −5,9 (piora demonstrada) |
+| 3 (dose escolhida na validação) | 0,698 → **0,853** | 0,970 → 0,967 | 0,7% → **2,1%** | REPROVADA: cauda e não-inferioridade |
+
+**A lição (não repetir): a cauda em folha sadia.** A tentativa 1 passou no portão de folha
+— mesma acurácia por folha — e piorou o Rover. Recalibrado o perfil no mosaico (o mesmo
+código e semente reproduzem a cabeça atual exatamente):
+
+| Rover, mosaico fora da amostra | cabeça atual | tentativa 1 |
+| --- | ---: | ---: |
+| plantas doentes pegas | 640/720 | 615/720 |
+| quadros sadios que viram evento | **103/900** | **163/900** |
+| fusão por planta: detecta / alarme falso | 631/720 · 12/300 | **432/720 · 45/300** |
+
+A cabeça atual nunca passa de 0,98; a robusta passa, e folhas sadias com P(doença) > 0,9 foram
+de 1,2% para 2,4% — duas folhas. O Rover lê ~70 recortes por quadro: um recorte sadio com
+doença "certa" vira evento, e a chance disso num quadro sadio sobe de ~57% para ~82%. O portão
+ganhou o critério `GateCriteria.margem_cauda` (a cauda não pode subir mais de 0,5 ponto nem de
+forma demonstrada) — foi ele que recusou a tentativa 3. A dose (suavização, destilação) agora
+sai da validação (`selecao_na_validacao`), nunca do portão; parado em 3 tentativas para não
+gastar o conjunto de teste.
+
+**Estado de produção**: cabeça, perfil do Rover, fusão da borda e conformal **de antes**
+(backup em `models/_backup-20261016/`); só o portão mudou. A memória do aprendizado contínuo
+foi restaurada ao estado anterior à tentativa 1 (os logits gravados eram da cabeça revertida).
+
+**O que resolve de verdade**: (1) uma saída "não é folha / fruto" na cabeça, treinada com
+captura própria (cereja, céu, solo, caule, pessoa — YouTube não serve); (2) robustez à
+captura medida e cobrada **no nível do Rover** (o mosaico no portão, não só por folha); (3) no
+Rover, foto parada com exposição curta: a resolução de um recorte de 12 MP é muito maior que a
+do vídeo, e o borrão é o que mais derruba o bicho-mineiro.
+
+<a id="gemeo"></a>
+## Gêmeo digital espaço-temporal — medido em 16/10/2026 (talhão sintético)
+
+Como usar: README, "Gêmeo digital do talhão". Aqui, o desenho, a medição e o que ela corrigiu.
+**Nada aqui foi medido em lavoura real**: o protocolo é sintético, com a verdade conhecida, e
+o piloto é que vai dizer quanto o gêmeo acerta no campo.
+
+**Protocolo** (`python -m training.mede_gemeo`, CPU): talhão de 20 ruas × 80 pés (1.600
+plantas, 0,7 m × 3,5 m); ferrugem com 4 focos; epidemia **estocástica e binária** planta a
+planta (cada pé em S, E, I ou R, sorteando as transições com a física do gêmeo e os vizinhos
+que de fato esporulam — não o próprio modelo de campo médio); passada a cada 14 dias, 90% de
+cobertura, em dois dias; Rover com sensibilidade 0,85 e alarme falso 3% por planta; fusão
+**calibrada** (LLR gaussiano verdadeiro, prior da cultura 0,1). `--baixada 5` multiplica por 5
+a suscetibilidade de 6 ruas × 30 m — o que é do talhão e a física não conhece. Três sementes.
+O ajuste vê as k primeiras passadas e prevê a k+1, que não viu.
+
+**Linhas de base**: persistência (a última passada repetida) e a heurística de contágio que a
+prescrição já usa (`app.prescricao._risco`, alcance 3,0 / 1,5 m), as duas recalibradas
+(Platt) no par anterior — o que um sistema em campo conseguiria. Métricas: log-verossimilhança
+da evidência da passada por planta (maior é melhor; é a do próprio filtro), AUC do sinal novo
+(entre as plantas que estavam limpas) e AUC da **infecção oculta** — entre as limpas, as que
+estão de fato infectadas (latente ou esporulando), inclusive as que o Rover ainda não vê.
+
+| cenário | passadas no ajuste | gêmeo | heurística do produto | persistência | AUC sinal novo (gêmeo / heurística) | AUC oculta (gêmeo / heurística) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| homogêneo | 5 | 0,114 | 0,114 | 0,105 | 0,67 / 0,70 | 0,81 / 0,84 |
+| homogêneo | 7 | **0,183** | 0,177 | 0,168 | **0,70** / 0,68 | 0,84 / 0,85 |
+| baixada 5× | 5 | 0,172 | **0,180** | 0,161 | 0,70 / **0,74** | 0,82 / 0,84 |
+| baixada 5× | 7 | **0,282** | 0,280 | 0,258 | **0,72** / 0,70 | **0,85** / 0,84 |
+
+"Gêmeo" é o ajustado com a seleção no par retido (abaixo). Leitura honesta: com 7 passadas o
+gêmeo empata ou ganha nas três medidas, sem recalibração externa; com 5, a heurística
+recalibrada no par anterior ainda leva vantagem, mais no talhão com baixada (a estrutura que a
+física não conhece). As duas ordenam as plantas escondidas parecido (as duas usam contágio pela
+vizinhança; a persistência, que não usa, fica em 0,53–0,56). O que o gêmeo dá e as bases não dão:
+o **latente** (quantas plantas pegaram e ainda não mostram), o **tempo** (janelas de infecção
+pela previsão do clima — o sintético tem tempo quase uniforme, então isso não aparece nesta
+tabela), horizonte além de uma passada, e os **cenários** de aplicação.
+
+**Seleção no par retido** (`app.gemeo.rede`): três candidatas disputam o último par de
+passadas, que nenhuma viu — física pura, física recalibrada (Platt, dois números ajustados no
+par anterior) e física com a rede residual. Nas 12 rodadas (2 cenários × 2 tamanhos × 3
+sementes), a física ficou em 9, a rede em 3 (ganho retido +0,002 a +0,006 por planta) e a
+recalibração em nenhuma. Onde a rede entrou, a previsão subiu até 0,04 (baixada, 7 passadas,
+semente 1: 0,415 → 0,454) e uma vez perdeu 0,001 — o par retido é um só, e o portão erra
+para os dois lados por esse tanto.
+
+**Recuperação dos parâmetros** (homogêneo, média de 3 sementes):
+
+| parâmetro | verdade | 5 passadas | IC95 cobre | 7 passadas | IC95 cobre |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| β | 0,12 | 0,079 | 3/3 | 0,050 | 0/3 |
+| alcance na rua | 1,8 m | 1,98 m | 3/3 | 2,22 m | 3/3 |
+| alcance entre ruas | 0,9 m | 0,76 m | 3/3 | 1,07 m | 3/3 |
+| fundo | 3·10⁻⁵ | 3,3·10⁻⁵ | 3/3 | 2,4·10⁻⁵ | 3/3 |
+| alarme falso | 0,03 | 0,032 | 2/3 | 0,032 | 2/3 |
+| sensibilidade | 0,85 | 0,957 | 2/3 | 0,964 | 0/3 |
+
+Alcances, fundo e alarme falso saem certos. β sai baixo e a sensibilidade alta pelo erro de
+modelo do campo médio (abaixo), e com mais passadas o intervalo encolhe em volta do valor
+viesado: o IC95 de Laplace é **condicional ao modelo**, não a incerteza do mundo.
+
+### O desenho que a medição impôs (não repetir)
+
+1. **Estado em área foliar não liga com sinal binário.** A primeira versão carregava fração
+   de área (S, E, I, R da folha) e invertia a posterior em ``I = -ln(1 - y)/κ`` a cada
+   passada. Com posterior exata recuperava a verdade; com o sinal binário da fusão, zerava a
+   planta doente que não foi sinalizada naquela passada, fazia de cada alarme falso um foco
+   (3% de 1.600 pés = 48 "focos" contra 4 de verdade) e batia num teto; o ajuste compensava
+   com β dez vezes menor e o alcance no limite, e κ era só calibre (não identificável). Hoje:
+   S, E, I, R são a **probabilidade** de cada estado da planta (campo médio de um SEIR
+   individual), P(sinal) = a + (s − a)·I, e a passada entra por **Bayes exato por planta**
+   com a razão odds(posterior)/odds(prior da cultura) — por isso o
+   `pass_observations` devolve o prior (`priors`).
+2. **O teste não pode ser o próprio modelo.** Gerar o talhão com o campo médio e ajustar o
+   campo médio media o modelo contra ele mesmo. O gerador é estocástico binário, e a fusão,
+   calibrada (o gerador "Beta(8,2) se sinalizada" punha posterior 0,8 em qualquer planta
+   doente, o que nenhuma fusão calibrada faz, e enviesava tudo).
+3. **O limite do campo médio.** Com os parâmetros verdadeiros, o filtro previa P(esporulando)
+   cinco vezes maior que a verdade nas plantas limpas: o campo médio põe em cada pé a força
+   esperada de todas as vizinhas, e a reboleira de verdade é aglomerada. O ajuste compensa
+   (β ~½). A correção da literatura, incidência não linear (ΣwI)^q (Liu, Hethcote & Levin,
+   1987), foi testada e **recusada**: o ajuste levou q ao limite de cima (1,5) e a previsão
+   piorou (0,113 → 0,062 com 5 passadas). Descontar os pares antigos no ajuste deu resultado
+   misto (melhor no talhão com baixada, pior no homogêneo) e ficou desligado.
+4. **Hessiana perto do limite.** Um parâmetro a menos de um passo do limite faz a diferença
+   finita ler a penalidade de fora do domínio; a Laplace caía no prior e o conjunto sorteava β
+   num fator 7 — AUC 0,58. Hoje a Hessiana é só nos parâmetros no interior **no ponto final**,
+   com a diagonal como recurso. O objetivo é mal condicionado (o alarme falso é ~10⁴ vezes mais
+   curvo que o resto): Nelder-Mead com reinício e polimento Levenberg-Marquardt.
+5. **Um filtro só.** Ajuste, rede e previsão percorrem as passadas pelo mesmo gerador
+   (`epidemia.filtrar`): a primeira versão tinha três laços, e um deles simulava de novo um
+   ou dois dias por passada (a passada leva dias; o relógio recomeçava da mediana).
+6. **O EM da prevalência colapsa** com poucas plantas e evidência fraca: de zero o Bayes não
+   sai (três sinais seguidos no mesmo pé deixavam P(I) em 0,002). Piso de uma planta (1/n).
+7. **A rede residual instável.** Com ~150 pesos e 4 a 6 pares de passadas, ganhava num par e
+   perdia no seguinte (−0,05, +0,01, −0,01); ponderar os pares recentes piorou nos três. O
+   portão recusa — é o que ele está lá para fazer. Daí a seleção com a recalibração de dois
+   números (acima).
+8. **"Identificado" não troca o modelo.** Com ganho abaixo do limiar, a primeira versão
+   devolvia o prior **com a covariância do prior**, e o conjunto sorteava β num fator 7: a
+   previsão de uma semente caiu de 0,111 para 0,022 por um ganho de 0,00099 por planta. O MAP
+   com a Laplace é a posterior, movam os dados muito ou pouco; "identificado" só avisa. E o
+   critério é o ganho **total** (3 nats), não por planta: 40.000 pés com 20 focos diluíam o
+   ganho por planta e davam "não identificado" com os dados movendo o ajuste.
+
+### Custo
+
+A soma do contágio é exata em O(N) (`grafo.Vizinhanca`: o núcleo exponencial ao longo da rua
+vira duas somas acumuladas em log). A primeira versão guardava as arestas até 12 m — num
+talhão de 40.000 pés (~10 ha de café) eram 6,7 milhões (~215 MB) e 5,4 s por avaliação do
+ajuste. Hoje, CPU, uma thread:
+
+| talhão | avaliação do ajuste (4 passadas) | ajuste completo | previsão 21 dias, 16 membros |
+| --- | ---: | ---: | ---: |
+| 1.600 pés, 7 passadas | — | 20 a 30 s | ~1 s |
+| 40.000 pés, 4 passadas | 0,36 s (era 5,41 s) | 229 s (com a máquina ocupada) | 9 s |
+
+O SaaS espera até 15 min pelo ajuste e 5 min pela previsão e pela prescrição.
+
+### O que falta para valer no campo
+
+- **Piloto**: passadas reais de café com a calibração da fusão por planta, e a estação da
+  fazenda (ou o Open-Meteo, que é reanálise: molhamento estimado por UR ≥ 90%).
+- **Os presets são qualitativos** (faixas da literatura para ferrugem, cercosporiose, phoma e
+  bicho-mineiro) e devem ser revistos pelo agrônomo; só β, alcances, fundo, alarme falso e
+  sensibilidade são ajustados ao talhão.
+- **Prescrição densa**: `app.prescricao` monta o núcleo n × n; a prescrição por risco limita
+  as candidatas (1.500 de maior risco, com aviso).
+
+<a id="enxame"></a>
+## O gêmeo no enxame: fusão entre fontes e prioridade de inspeção — medido em 17/10/2026
+
+O Nível 4 (coordenação de Rover, drone e base) mora no SaaS (`VALTEXA-SAAS/docs/ENXAME.md`).
+A parte do gêmeo é esta: **várias fontes** num filtro só e **onde vale olhar**. Talhão
+sintético (`python -m training.mede_enxame`), o gerador de `mede_gemeo`; 3 sementes.
+
+**Canal por fonte** (`app/gemeo/epidemia.py`: `Canal`, `CANAIS`, `canal_de`). Cada passada tem
+a `fonte` (`rover`, `drone`, `agronomo`) e entra no filtro com o canal dela — sensibilidade e
+alarme falso. Dada a planta, as fontes veem independentes: a fusão é o produto das
+verossimilhanças. O do Rover é ajustado ao talhão; os outros vêm da tabela — o do drone
+(0,45 / 0,06) é **suposição de projeto**, não medida: a copa esconde o terço inferior, onde a
+ferrugem começa. Evidência de outra fonte entra por planta em
+`POST /fields/{id}/gemeo/observacoes` (LLR por doença); `fonte=rover` é recusada — a do Rover
+já chega pela fusão, e entrar de novo seria contá-la duas vezes.
+
+| previsão da passada seguinte do Rover | log-v (homogêneo) | AUC infectada oculta | log-v (baixada 5×) | AUC | sensibilidade do Rover ajustada (verdade 0,85) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| só o Rover (a cada 14 dias) | 0,142 | 0,838 | 0,321 | 0,914 | 0,94–0,97 |
+| Rover + drone (a cada 7), cada um com o seu canal | **0,152** | **0,861** | 0,333 | **0,927** | 0,89–0,96 |
+| Rover + drone, os dois com o canal do Rover | 0,152 | 0,855 | 0,338 | 0,916 | **0,64–0,77** |
+
+A fusão ingênua parece igual na verossimilhança, mas ordena pior as plantas escondidas e
+**estraga o canal do Rover**: para explicar os sinais fracos do drone, o ajuste rebaixa a
+sensibilidade dele. É o argumento para o canal por fonte, e para medir o do drone antes de
+confiar nele.
+
+**Prioridade de inspeção** (`app/gemeo/prioridade.py`, `GET /fields/{id}/gemeo/prioridades`).
+O valor da informação da decisão tratar / não tratar, por planta, somado por trecho de rua
+(Rover) ou bloco (drone); a consequência inclui as vizinhas que a planta infectaria (pelo
+núcleo ajustado). Sem os números do produtor, a informação mútua em bits. Inspeção simulada
+no dia da visita, com a verdade, e a mesma regra de decisão para todas as políticas:
+
+| valor realizado (R$ poupados contra não inspecionar) | orçamento | valor da informação | varredura em ordem | sorteio | só risco | só incerteza |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| limiar ~11%, homogêneo | 15% dos trechos | **64** | 53 | 45 | 13 | 13 |
+| limiar ~11%, homogêneo | 30% | **120** | 98 | 74 | 33 | 38 |
+| limiar ~11%, baixada | 30% | **19** | 11 | 5 | 1 | 2 |
+| limiar ~4%, homogêneo | 30% | **27** | 9 | 9 | 4 | 1 |
+
+Em 24 combinações (3 sementes × 2 economias × 2 talhões × 2 orçamentos) o valor da
+informação nunca perdeu para nenhuma alternativa. **Só risco e só incerteza perdem até da
+varredura**: mandam o Rover às plantas cuja decisão já está tomada (com 60% de risco e
+sensibilidade 0,9, nem o "não vi nada" desce abaixo do limiar — trata-se de qualquer jeito).
+O ganho absoluto é pequeno (2–4% da perda): o gêmeo de campo médio superestima o risco e manda
+tratar quase tudo; com o gêmeo calibrado no campo, a inspeção deve valer mais — a medir.
+
+**O que não fazer com a prioridade.** Ela desce para o Rover (dentro da missão assinada)
+**só para decidir a bordo** — onde gastar a percepção ativa. Nunca como evidência: a mesma
+observação voltaria ao gêmeo duas vezes, e a certeza cresceria sem dado novo.
+
+## Inspeção adaptativa, dispersão pelo vento e aplicação localizada — medido em 19/10/2026
+
+### Novidade no embedding da torre (o Rover reconhece quando não sabe?)
+
+`app/inference/novidade_cabeca.py`, ajustado por `training/fit_novidade_cabeca.py` no treino do
+café + 60% do BRACOL (a cabeça de produção treinou com os dois), limiares no percentil 99 da
+calibração (validação do café + 20% do BRACOL), 64 componentes fixados antes de olhar os vídeos.
+Referência instalada: `models/coffee_foliar.novidade.npz` (sha256 `0fb62d71…`).
+
+| conjunto | recortes acima do limiar 1 | acima de 1,2 (o do Rover) |
+| --- | ---: | ---: |
+| teste do café + BRACOL (fotos) | 0,7% | — |
+| acervo externo de folhas de café | 0% | — |
+| BRACOL separado, pelo caminho do quadro (redimensiona + JPEG) | **31%** (15/48) | **0%** (0/48) |
+| vídeo do YouTube, todos os 7.665 recortes | 66% | 16% |
+| vídeo, doença com ≥ 90% de confiança dentro do portão | 41% | 7% |
+
+Escore mediano das folhas legítimas não vistas: 0,96; dos recortes de vídeo com doença
+confiante: 0,97. **A novidade não separa o erro confiante em folha de folha nova legítima** — só
+a cena que não é folha (com 1,2: dossel 46%, planta inteira 32%, solo 27%, inseto 26% dos
+recortes; folha de café 11%). O limiar do Rover é 1,2, calibrado no café não visto; no ensaio
+ponta a ponta com pesos reais, com limiar 1 os originais guardados dobravam (29 → 58), com 1,2
+voltaram a 29 (34/34 passos OK). O erro confiante em folha de vídeo continua sendo assunto de
+dado de campo validado (aprendizado contínuo), não de novidade.
+
+### Dispersão pelo vento (`app/gemeo/dispersao.py`, `training/mede_dispersao.py`)
+
+Talhão sintético (30 ruas x 100 plantas), SEIR estocástico com parte do contágio pelo ar e vento
+de oeste atravessando as ruas; cada modelo ajusta o seu β numa semana e prevê quem pega na
+seguinte (estado verdadeiro de quem esporula; 5 sementes):
+
+| talhão | modelo | log-perda | AUC |
+| --- | --- | ---: | ---: |
+| com vento | contato (o núcleo de hoje) | 0,321 ± 0,065 | 0,815 ± 0,037 |
+| com vento | vento certo | 0,265 ± 0,058 | 0,841 ± 0,040 |
+| com vento | vento ao contrário | 0,313 ± 0,059 | 0,759 ± 0,033 |
+| com vento | **ω escolhido pelo talhão** | **0,265** | **0,841** |
+| sem vento | contato | 0,052 ± 0,010 | 0,972 ± 0,006 |
+| sem vento | vento | 0,075 ± 0,015 | 0,928 ± 0,020 |
+| sem vento | **ω escolhido pelo talhão** | **0,052** | **0,972** |
+
+O vento ajuda quando existe e com a direção certa; vento errado é pior que nada; ar onde não há
+atrapalha. Escolhendo ω ∈ {0; 0,3; 0,6; 0,9} pela verossimilhança da semana de ajuste, o
+talhão acertou o verdadeiro nas 10 execuções (0,6 e 0). No gêmeo:
+`POST /gemeo/ajuste?dispersao=true&azimute_rua_graus=` faz essa escolha depois do ajuste
+(`ajuste.escolher_dispersao`); desligado por padrão. Dado sintético com a mesma física do
+modelo: mede a peça, não que a ferrugem do café se espalha assim.
+
+### PINN para a dispersão (`training/pinn_dispersao.py`)
+
+Campo verdadeiro resolvido numericamente (D = 0,8 m²/s, λ = 0,04/s, vento conhecido, 4 focos),
+40 armadilhas com 10% de ruído, erro do campo em 400 pontos não medidos (3 sementes):
+
+| método | erro em D | erro em λ | erro mediano do campo (log) |
+| --- | --- | --- | ---: |
+| PINN (resíduo em C) | -25%, -1%, +141% | +46%, +79%, +147% | 0,10 / 0,16 / 0,18 |
+| PINN (resíduo em log C) | -76%, -52%, -62% | -29%, -54%, -34% | 0,61 / 0,75 / 0,38 |
+| rede só de dados | — | — | 0,06 / 0,15 / 0,17 |
+| **ajuste pelo solucionador** (Nelder-Mead em log D, log λ) | **-0,6%, -1,3%, -0,3%** | **+0,3%, -1,9%, +1,1%** | **0,010 / 0,021 / 0,012** |
+
+Com dado esparso, a PINN não recuperou os parâmetros de forma confiável e não superou a rede sem
+física; o ajuste pelo solucionador numérico da mesma equação recuperou D e λ com erro de 1–2%.
+É o caso otimista (sem erro de modelo, fontes e vento conhecidos). Para o café, faltam a série
+de armadilha de esporos e o anemômetro no talhão, os mecanismos do patógeno e a comparação com
+as passadas seguintes — até lá D, λ e ω ficam como hipótese.
+
 ## Convenções compartilhadas
 
 Valem para os quatro modelos.

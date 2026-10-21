@@ -21,7 +21,10 @@ falso). Então:
 
 Cada recorte sai do original que o Rover processou (lente já corrigida), pela caixa que o
 registro guarda. O nome do arquivo diz talhão, passada, planta e quadro — rastreável até a
-foto e removível se o cliente retirar o consentimento.
+foto e removível se o cliente retirar o consentimento. ``campo.csv`` (na raiz de ``--out``)
+dá a origem de cada recorte, sadio ou a revisar, pelo nome do arquivo: o
+``training.adapt_campo`` separa treino, validação e teste **por planta** com ele (recortes da
+mesma planta em lados diferentes do corte seriam o mesmo exemplo duas vezes).
 """
 
 from __future__ import annotations
@@ -49,6 +52,7 @@ def importa(labels: dict, registros: list[Path], originais: Path, out: Path,
     contagem: Counter[str] = Counter()
     revisar = out / "_revisar"
     manifesto_linhas = []
+    origem_linhas = []
     abertas: dict[str, Image.Image | None] = {}
     for caminho in registros:
         for linha in caminho.read_text(encoding="utf-8").splitlines():
@@ -75,6 +79,7 @@ def importa(labels: dict, registros: list[Path], originais: Path, out: Path,
                     destino = out / HEALTHY
                     destino.mkdir(parents=True, exist_ok=True)
                     imagem.crop(caixa).save(destino / nome, quality=95)
+                    origem_linhas.append([nome, field_id, pass_id, planta, quadro, rotulo])
                     contagem[HEALTHY] += 1
                     continue
                 p = float((t.get("probabilities") or {}).get(rotulo, 0.0))
@@ -86,6 +91,7 @@ def importa(labels: dict, registros: list[Path], originais: Path, out: Path,
                 imagem.crop(caixa).save(destino / nome, quality=95)
                 manifesto_linhas.append([f"{_seguro(rotulo)}/{nome}", field_id, pass_id, planta,
                                          quadro, rotulo, f"{p:.4f}"])
+                origem_linhas.append([nome, field_id, pass_id, planta, quadro, rotulo])
                 contagem[f"revisar:{rotulo}"] += 1
     if manifesto_linhas:
         revisar.mkdir(parents=True, exist_ok=True)
@@ -94,6 +100,20 @@ def importa(labels: dict, registros: list[Path], originais: Path, out: Path,
             w.writerow(["arquivo", "field_id", "pass_id", "plant_id", "frame", "rotulo_planta",
                         "prob_modelo"])
             w.writerows(sorted(manifesto_linhas, key=lambda x: -float(x[-1])))
+    if origem_linhas:
+        out.mkdir(parents=True, exist_ok=True)
+        anteriores = {}
+        caminho = out / "campo.csv"
+        if caminho.exists():  # importações anteriores no mesmo dataset continuam valendo
+            with caminho.open(newline="", encoding="utf-8") as fh:
+                anteriores = {linha["arquivo"]: linha for linha in csv.DictReader(fh)}
+        colunas = ["arquivo", "field_id", "pass_id", "plant_id", "frame", "rotulo_planta"]
+        for linha in origem_linhas:
+            anteriores[linha[0]] = dict(zip(colunas, linha, strict=True))
+        with caminho.open("w", newline="", encoding="utf-8") as fh:
+            w = csv.DictWriter(fh, fieldnames=colunas)
+            w.writeheader()
+            w.writerows(anteriores[k] for k in sorted(anteriores))
     return dict(contagem)
 
 

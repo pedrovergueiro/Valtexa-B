@@ -194,6 +194,12 @@ class Settings(BaseSettings):
     :mod:`app.fields_api`). Vazio (padrão) desliga — o rover responde só por quadro.
     """
 
+    clima_open_meteo: bool = False
+    """Se o gêmeo digital (:mod:`app.gemeo`) busca o clima do talhão no Open-Meteo (histórico e
+    previsão horária, sem chave) pela posição das plantas. Desligado (padrão): a API não faz
+    chamada externa sozinha, e o clima chega pela estação da fazenda
+    (``POST /fields/{id}/clima``)."""
+
     fields_tile_log: bool = False
     """Se a fusão guarda as probabilidades de cada recorte com a planta a que foi associado
     (``<FIELDS_DIR>/plantas/registro/<talhão>.jsonl``).

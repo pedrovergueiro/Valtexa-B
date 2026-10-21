@@ -256,3 +256,33 @@ class TestGatePerChosenModel:
         np.savez(tmp_path / "old.npz", **old)
 
         assert FramingReference.load(tmp_path / "old.npz").thresholds == {}
+
+
+def _mistura(principal: str, folha: str = "folha_cafe", peso: float = 0.97) -> np.ndarray:
+    """A cena ``principal`` vence, mas ``folha`` leva massa suficiente para passar no limiar."""
+    return _axis(principal) + peso * _axis(folha)
+
+
+def test_cena_vencedora_tem_de_ser_folha_so_no_cafe(tmp_path) -> None:
+    import dataclasses
+
+    base = _reference(threshold=0.05)
+    estrita = dataclasses.replace(base, leaf_winner_crops=("coffee",))
+    gente = np.array([_mistura("pessoa")])
+    # O limiar sozinho deixa passar a pessoa na frente do cafeeiro...
+    assert judge(base, gente, crop="coffee")[0].in_scope
+    veredito = judge(estrita, gente, crop="coffee")[0]
+    assert not veredito.in_scope and veredito.scene == "pessoa"
+    # ...e a regra vale só para as culturas listadas.
+    assert judge(estrita, gente)[0].in_scope
+    # Folha de outra planta vencendo continua passando: é folha (custo medido: 13,6% → 3,4%).
+    assert judge(estrita, np.array([_mistura("folha_outra")]), crop="coffee")[0].in_scope
+    assert judge(estrita, np.array([_axis("folha_cafe")]), crop="coffee")[0].in_scope
+
+    estrita.save(tmp_path / "f.npz")
+    assert FramingReference.load(tmp_path / "f.npz").leaf_winner_crops == ("coffee",)
+    base.save(tmp_path / "antiga.npz")
+    with np.load(tmp_path / "antiga.npz") as raw:  # um framing.npz de antes desta regra
+        np.savez(tmp_path / "sem_chave.npz", **{k: raw[k] for k in raw.files
+                                                 if k != "leaf_winner_crops"})
+    assert FramingReference.load(tmp_path / "sem_chave.npz").leaf_winner_crops == ()

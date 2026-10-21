@@ -320,11 +320,11 @@ def _posicoes(plantas: Sequence[Any]) -> tuple[np.ndarray, np.ndarray]:
     return ao_longo, atraves
 
 
-def _ordem_da_rua(row_id: str) -> tuple[int, float, str]:
-    try:
-        return (0, float(row_id), row_id)
-    except ValueError:
-        return (1, 0.0, row_id)
+def _ordem_da_rua(row_id: str) -> tuple[tuple[int, float, str], ...]:
+    """A ordem natural da fusão (``G2`` antes de ``G10``): a distância entre ruas sai dela."""
+    from app.plant_fusion import _row_sort_key
+
+    return _row_sort_key(row_id)
 
 
 def _nucleo(
